@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.swp
+.DS_Store
+.vscode
+.idea
+__pycache__
+*.pyc
+.env

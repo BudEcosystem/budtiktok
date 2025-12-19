@@ -1,0 +1,25 @@
+[package]
+name = "budtiktok-coordinator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Distributed coordinator for BudTikTok worker fleet"
+
+[dependencies]
+budtiktok-core = { path = "../budtiktok-core" }
+budtiktok-ipc = { path = "../budtiktok-ipc" }
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+tokio = { version = "1.35", features = ["full"] }
+futures = "0.3"
+dashmap = "5.5"
+metrics = "0.22"
+metrics-exporter-prometheus = "0.13"
+
+[features]
+default = ["metrics"]
+metrics = []
+distributed = []

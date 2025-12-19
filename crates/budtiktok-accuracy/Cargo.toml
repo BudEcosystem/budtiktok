@@ -1,0 +1,28 @@
+[package]
+name = "budtiktok-accuracy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Accuracy testing suite for BudTikTok - validates against HuggingFace tokenizers"
+
+[[bin]]
+name = "budtiktok-accuracy"
+path = "src/main.rs"
+
+[dependencies]
+budtiktok-core = { path = "../budtiktok-core" }
+tokenizers = "0.15"
+ahash = "0.8"
+clap = { version = "4.4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+indicatif = "0.17"
+tabled = "0.14"
+colored = "2.0"
+rayon = "1.8"
+
+[dev-dependencies]
+tempfile = "3.9"

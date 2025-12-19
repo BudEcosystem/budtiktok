@@ -1,0 +1,18 @@
+[package]
+name = "budtiktok-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPU-accelerated tokenization for BudTikTok"
+
+[dependencies]
+budtiktok-core = { path = "../budtiktok-core" }
+thiserror.workspace = true
+tracing.workspace = true
+cudarc = { version = "0.10", optional = true }
+
+[features]
+default = []
+cuda = ["cudarc"]
+metal = []
+vulkan = []

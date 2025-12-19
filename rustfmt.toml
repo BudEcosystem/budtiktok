@@ -1,0 +1,53 @@
+# BudTikTok Rust formatting configuration
+# Requires nightly for some options
+
+# Edition
+edition = "2021"
+
+# Maximum line width
+max_width = 100
+
+# Indentation
+tab_spaces = 4
+hard_tabs = false
+
+# Imports
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_imports = true
+reorder_modules = true
+
+# Functions and control flow
+fn_single_line = false
+where_single_line = false
+control_brace_style = "AlwaysSameLine"
+brace_style = "SameLineWhere"
+
+# Comments
+wrap_comments = true
+comment_width = 80
+normalize_comments = true
+normalize_doc_attributes = true
+
+# Misc
+use_field_init_shorthand = true
+use_try_shorthand = true
+force_multiline_blocks = false
+
+# Match expressions
+match_arm_blocks = true
+match_block_trailing_comma = true
+
+# Struct/enum
+struct_lit_single_line = true
+enum_discrim_align_threshold = 20
+
+# Macros
+format_macro_matchers = true
+format_macro_bodies = true
+
+# Strings
+format_strings = true
+
+# Chains
+chain_width = 60

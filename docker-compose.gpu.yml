@@ -1,0 +1,86 @@
+# BudTikTok GPU Docker Compose Configuration
+# GPU-enabled deployment with CUDA support
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # Coordinator - Request routing and load balancing
+  # ==========================================================================
+  coordinator:
+    build:
+      context: .
+      target: coordinator
+    container_name: budtiktok-coordinator-gpu
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - RUST_LOG=info
+      - BUDTIKTOK_WORKERS=gpu-worker-1:8080,gpu-worker-2:8080
+      - BUDTIKTOK_HEALTH_CHECK_INTERVAL=5s
+      - BUDTIKTOK_MAX_BATCH_TOKENS=32768
+    depends_on:
+      - gpu-worker-1
+      - gpu-worker-2
+    networks:
+      - budtiktok-gpu-net
+    restart: unless-stopped
+
+  # ==========================================================================
+  # GPU Worker 1 - GPU-accelerated tokenization
+  # ==========================================================================
+  gpu-worker-1:
+    build:
+      context: .
+      target: gpu-worker
+    container_name: budtiktok-gpu-worker-1
+    environment:
+      - RUST_LOG=info
+      - BUDTIKTOK_CACHE_SIZE=200000
+      - BUDTIKTOK_WORKER_ID=gpu-worker-1
+      - BUDTIKTOK_GPU=auto
+      - CUDA_VISIBLE_DEVICES=0
+    expose:
+      - "8080"
+    networks:
+      - budtiktok-gpu-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ==========================================================================
+  # GPU Worker 2 - GPU-accelerated tokenization
+  # ==========================================================================
+  gpu-worker-2:
+    build:
+      context: .
+      target: gpu-worker
+    container_name: budtiktok-gpu-worker-2
+    environment:
+      - RUST_LOG=info
+      - BUDTIKTOK_CACHE_SIZE=200000
+      - BUDTIKTOK_WORKER_ID=gpu-worker-2
+      - BUDTIKTOK_GPU=auto
+      - CUDA_VISIBLE_DEVICES=1
+    expose:
+      - "8080"
+    networks:
+      - budtiktok-gpu-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+networks:
+  budtiktok-gpu-net:
+    driver: bridge

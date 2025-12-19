@@ -1,0 +1,15 @@
+cargo:rerun-if-changed=build.rs
+cargo:rustc-cfg=has_sse42
+cargo:rustc-cfg=has_sse2
+cargo:warning=Building for target: x86_64-unknown-linux-gnu (arch: x86_64)
+cargo:rustc-env=BUDTIKTOK_VERSION=0.1.0
+cargo:rustc-env=BUDTIKTOK_BUILD_TIMESTAMP=2025-12-17T11:34:06Z
+cargo:rustc-env=BUDTIKTOK_BUILD_PROFILE=debug
+cargo:rustc-env=BUDTIKTOK_RUSTC_VERSION=rustc 1.92.0 (ded5c06cf 2025-12-08)
+cargo:rustc-env=BUDTIKTOK_GIT_HASH=unknown
+cargo:rustc-env=BUDTIKTOK_GIT_DIRTY=false
+cargo:rustc-env=BUDTIKTOK_TARGET_ARCH=x86_64
+cargo:rustc-env=BUDTIKTOK_TARGET_OS=linux
+cargo:rustc-env=BUDTIKTOK_TARGET_ENV=gnu
+cargo:rustc-cfg=target_arch_x86_64
+cargo:rustc-cfg=target_os_linux

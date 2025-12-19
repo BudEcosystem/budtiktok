@@ -1,0 +1,34 @@
+[package]
+name = "budtiktok-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "High-performance IPC for distributed BudTikTok"
+
+[dependencies]
+budtiktok-core = { path = "../budtiktok-core" }
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+tokio = { version = "1.35", features = ["full"] }
+bytes = "1.5"
+crossbeam-channel = "0.5"
+
+# Serialization
+bincode.workspace = true
+rkyv.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.27", features = ["mman", "fs"] }
+memmap2 = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.52", features = ["Win32_System_Memory", "Win32_Foundation"] }
+
+[features]
+default = ["shared-memory", "unix-socket"]
+shared-memory = []
+unix-socket = []
+tcp = []

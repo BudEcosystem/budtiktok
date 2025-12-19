@@ -1,0 +1,142 @@
+# BudTikTok Docker Compose Configuration
+# Multi-container deployment with coordinator, workers, and monitoring
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # Coordinator - Request routing and load balancing
+  # ==========================================================================
+  coordinator:
+    build:
+      context: .
+      target: coordinator
+    container_name: budtiktok-coordinator
+    ports:
+      - "8080:8080"   # API endpoint
+      - "9090:9090"   # Metrics endpoint
+    environment:
+      - RUST_LOG=info
+      - BUDTIKTOK_WORKERS=worker-1:8080,worker-2:8080
+      - BUDTIKTOK_HEALTH_CHECK_INTERVAL=5s
+      - BUDTIKTOK_MAX_BATCH_TOKENS=16384
+    depends_on:
+      - worker-1
+      - worker-2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - budtiktok-net
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Worker 1 - Tokenization worker
+  # ==========================================================================
+  worker-1:
+    build:
+      context: .
+      target: worker
+    container_name: budtiktok-worker-1
+    environment:
+      - RUST_LOG=info
+      - BUDTIKTOK_CACHE_SIZE=100000
+      - BUDTIKTOK_WORKER_ID=worker-1
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - budtiktok-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # ==========================================================================
+  # Worker 2 - Tokenization worker
+  # ==========================================================================
+  worker-2:
+    build:
+      context: .
+      target: worker
+    container_name: budtiktok-worker-2
+    environment:
+      - RUST_LOG=info
+      - BUDTIKTOK_CACHE_SIZE=100000
+      - BUDTIKTOK_WORKER_ID=worker-2
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - budtiktok-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # ==========================================================================
+  # Prometheus - Metrics collection
+  # ==========================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: budtiktok-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - budtiktok-net
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Grafana - Metrics visualization
+  # ==========================================================================
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: budtiktok-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=budtiktok
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - budtiktok-net
+    restart: unless-stopped
+
+networks:
+  budtiktok-net:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:

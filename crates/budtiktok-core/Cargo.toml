@@ -1,0 +1,70 @@
+[package]
+name = "budtiktok-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core tokenization algorithms for BudTikTok"
+
+[features]
+default = []
+# Use jemalloc as the global allocator (recommended for Linux servers)
+jemalloc = ["dep:tikv-jemallocator"]
+# Use mimalloc as the global allocator (good cross-platform performance)
+mimalloc = ["dep:mimalloc"]
+# Enable all allocator options (for benchmarking)
+all-allocators = ["jemalloc", "mimalloc"]
+
+[dependencies]
+ahash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+unicode-general-category.workspace = true
+fancy-regex.workspace = true
+aho-corasick.workspace = true
+daachorse.workspace = true  # Faster double-array Aho-Corasick
+bumpalo.workspace = true
+smallvec.workspace = true
+fastrand.workspace = true
+parking_lot.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+rayon.workspace = true
+num_cpus = "1.16"
+lru.workspace = true
+lazy_static.workspace = true
+
+# Optional allocators
+tikv-jemallocator = { workspace = true, optional = true }
+mimalloc = { workspace = true, optional = true }
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+rstest.workspace = true
+tokenizers.workspace = true
+
+[[bench]]
+name = "scalar_tokenization"
+harness = false
+
+[[bench]]
+name = "bpe_benchmark"
+harness = false
+
+[[bench]]
+name = "bpe_extensive_benchmark"
+harness = false
+
+[[bench]]
+name = "bpe_scale_benchmark"
+harness = false
+
+[[bench]]
+name = "hf_tokenizers_benchmark"
+harness = false

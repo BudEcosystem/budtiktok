@@ -1,0 +1,27 @@
+# Prometheus configuration for BudTikTok
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Coordinator metrics
+  - job_name: 'budtiktok-coordinator'
+    static_configs:
+      - targets: ['coordinator:9090']
+    metrics_path: /metrics
+    scrape_interval: 5s
+
+  # Worker metrics
+  - job_name: 'budtiktok-workers'
+    static_configs:
+      - targets:
+          - 'worker-1:8080'
+          - 'worker-2:8080'
+    metrics_path: /metrics
+    scrape_interval: 5s
+
+  # Self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

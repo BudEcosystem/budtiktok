@@ -1,0 +1,38 @@
+# BudTikTok Clippy configuration
+
+# Cognitive complexity threshold for functions
+cognitive-complexity-threshold = 30
+
+# Maximum number of lines in a function
+too-many-lines-threshold = 200
+
+# Maximum number of arguments for functions
+too-many-arguments-threshold = 8
+
+# Maximum number of struct fields
+max-struct-bools = 5
+
+# Disable certain lints that are too noisy for performance code
+# - `clippy::inline_always` - we know what we're doing with hot paths
+# - `clippy::cast_possible_truncation` - we often know value ranges
+# - `clippy::cast_sign_loss` - handled carefully in SIMD code
+# - `clippy::cast_precision_loss` - acceptable for f32 hash calculations
+# - `clippy::missing_panics_doc` - internal functions
+
+# Type complexity threshold
+type-complexity-threshold = 300
+
+# Allow many single-char names in SIMD code
+single-char-binding-names-threshold = 8
+
+# MSRV for lint suggestions
+msrv = "1.75.0"
+
+# Patterns to allow
+allowed-idents-below-min-chars = ["i", "j", "k", "n", "x", "y", "id", "cp", "ch"]
+
+# Don't warn about large enums if they're needed
+enum-variant-size-threshold = 200
+
+# Allow wildcards in match arms for large enums
+max-wildcard-imports = 3

@@ -1,0 +1,24 @@
+[package]
+name = "budtiktok-simd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SIMD-accelerated text processing for BudTikTok"
+
+[dependencies]
+budtiktok-core = { path = "../budtiktok-core" }
+
+[target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dependencies]
+# x86/x86_64 SIMD intrinsics via std::arch
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+# ARM NEON intrinsics via std::arch
+
+[features]
+default = []
+avx512 = []
+avx2 = []
+sse42 = []
+neon = []
+sve = []
+rvv = []  # RISC-V Vector Extension
