@@ -290,12 +290,14 @@ dependencies = [
  "blazetext_wordpiece",
  "budtiktok-core",
  "budtiktok-gpu",
+ "budtiktok-hf-compat",
  "chrono",
  "clap",
  "colored",
  "criterion",
  "csv",
  "indicatif 0.17.11",
+ "num_cpus",
  "plotters",
  "rand 0.8.5",
  "rayon",
@@ -385,6 +387,19 @@ dependencies = [
  "budtiktok-core",
  "cudarc",
  "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "budtiktok-hf-compat"
+version = "0.1.0"
+dependencies = [
+ "budtiktok-core",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokenizers",
  "tracing",
 ]
 

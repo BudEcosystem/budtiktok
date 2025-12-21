@@ -492,9 +492,21 @@ impl WordCache {
 }
 
 // =============================================================================
-// FastBpeEncoder - Optimized for single-sequence with caching
+// FastBpeEncoder - DEPRECATED: Use OptimizedBpeEncoder from bpe_linear.rs
 // =============================================================================
+//
+// WARNING: FastBpeEncoder has a known bug where it incorrectly handles
+// space-prefixed tokens (e.g., " world" is split as " " + "world" instead
+// of being recognized as a single token). Use OptimizedBpeEncoder for
+// production code.
+//
+// This encoder is kept only for benchmark comparisons and will be removed
+// in a future release.
 
+#[deprecated(
+    since = "0.2.0",
+    note = "Use OptimizedBpeEncoder from bpe_linear module instead. FastBpeEncoder has bugs with space-prefixed tokens."
+)]
 pub struct FastBpeEncoder {
     vocab: AHashMap<String, u32>,
     vocab_r: Vec<String>,
@@ -725,8 +737,12 @@ impl FastBpeEncoder {
 }
 
 // =============================================================================
-// SimdBpeEncoder - SIMD-accelerated batch processing
+// SimdBpeEncoder - DEPRECATED: Use OptimizedBpeEncoder from bpe_linear.rs
 // =============================================================================
+//
+// WARNING: SimdBpeEncoder uses the same buggy encode_word() logic as
+// FastBpeEncoder and incorrectly handles space-prefixed tokens.
+// Use OptimizedBpeEncoder for production code.
 
 /// SIMD-accelerated BPE encoder for batch processing
 ///
@@ -735,6 +751,10 @@ impl FastBpeEncoder {
 /// - Thread-local workspaces for zero allocation
 /// - Optimal parallel chunk sizes
 /// - Byte-level pre-tokenization (matches HuggingFace ByteLevel)
+#[deprecated(
+    since = "0.2.0",
+    note = "Use OptimizedBpeEncoder from bpe_linear module instead. SimdBpeEncoder has bugs with space-prefixed tokens."
+)]
 pub struct SimdBpeEncoder {
     vocab: AHashMap<String, u32>,
     vocab_r: Vec<String>,

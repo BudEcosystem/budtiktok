@@ -9,6 +9,7 @@ members = [
     "crates/budtiktok-cli",
     "crates/budtiktok-bench",
     "crates/budtiktok-accuracy",
+    "crates/budtiktok-hf-compat",
 ]
 
 [workspace.package]
@@ -88,6 +89,7 @@ budtiktok-simd = { path = "crates/budtiktok-simd" }
 budtiktok-gpu = { path = "crates/budtiktok-gpu" }
 budtiktok-ipc = { path = "crates/budtiktok-ipc" }
 budtiktok-coordinator = { path = "crates/budtiktok-coordinator" }
+budtiktok-hf-compat = { path = "crates/budtiktok-hf-compat" }
 
 [profile.release]
 lto = "fat"

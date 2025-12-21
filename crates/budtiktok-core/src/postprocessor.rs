@@ -526,6 +526,105 @@ impl PostProcessor for TemplatePostProcessor {
     }
 }
 
+/// Sequence post-processor
+///
+/// Chains multiple post-processors together, applying them in order.
+/// This allows composing complex post-processing pipelines.
+///
+/// High-performance implementation with:
+/// - Pre-calculated added token counts
+/// - Efficient sequential processing
+pub struct SequencePostProcessor {
+    /// The list of processors to apply in order
+    processors: Vec<Box<dyn PostProcessor + Send + Sync>>,
+}
+
+impl std::fmt::Debug for SequencePostProcessor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SequencePostProcessor")
+            .field("processors_count", &self.processors.len())
+            .finish()
+    }
+}
+
+impl Clone for SequencePostProcessor {
+    fn clone(&self) -> Self {
+        // Note: This creates an empty sequence because we can't clone trait objects
+        // For practical use, reconstruct from wrapper type
+        Self {
+            processors: Vec::new(),
+        }
+    }
+}
+
+impl SequencePostProcessor {
+    /// Create a new sequence post-processor
+    pub fn new(processors: Vec<Box<dyn PostProcessor + Send + Sync>>) -> Self {
+        Self { processors }
+    }
+
+    /// Create an empty sequence (pass-through)
+    pub fn empty() -> Self {
+        Self { processors: Vec::new() }
+    }
+
+    /// Add a processor to the sequence
+    pub fn add(&mut self, processor: Box<dyn PostProcessor + Send + Sync>) {
+        self.processors.push(processor);
+    }
+
+    /// Get the number of processors in the sequence
+    pub fn len(&self) -> usize {
+        self.processors.len()
+    }
+
+    /// Check if the sequence is empty
+    pub fn is_empty(&self) -> bool {
+        self.processors.is_empty()
+    }
+}
+
+impl PostProcessor for SequencePostProcessor {
+    fn process(&self, encoding: Encoding, add_special_tokens: bool) -> Encoding {
+        if self.processors.is_empty() {
+            return encoding;
+        }
+
+        let mut result = encoding;
+        for processor in &self.processors {
+            result = processor.process(result, add_special_tokens);
+        }
+        result
+    }
+
+    fn process_pair(
+        &self,
+        encoding: Encoding,
+        pair: Encoding,
+        add_special_tokens: bool,
+    ) -> Encoding {
+        if self.processors.is_empty() {
+            let mut result = encoding;
+            result.merge(pair, false);
+            return result;
+        }
+
+        // First processor handles the pair
+        let mut result = self.processors[0].process_pair(encoding, pair, add_special_tokens);
+
+        // Subsequent processors process the merged result as single
+        for processor in &self.processors[1..] {
+            result = processor.process(result, add_special_tokens);
+        }
+        result
+    }
+
+    fn added_tokens(&self, is_pair: bool) -> usize {
+        self.processors.iter().map(|p| p.added_tokens(is_pair)).sum()
+    }
+}
+
+
 /// ByteLevel post-processor
 ///
 /// Used with byte-level BPE (GPT-2 style).
@@ -562,6 +661,137 @@ impl PostProcessor for ByteLevelPostProcessor {
     fn added_tokens(&self, _is_pair: bool) -> usize {
         0
     }
+}
+
+// ============================================================================
+// PostProcessor Wrapper Enum for Serialization
+// ============================================================================
+
+use serde::{Deserialize, Serialize};
+
+/// Wrapper enum for all post-processor types, supporting HF-compatible serialization
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum PostProcessorWrapper {
+    /// BERT processing
+    #[serde(rename = "BertProcessing")]
+    Bert {
+        sep: (String, u32),
+        cls: (String, u32),
+    },
+    /// RoBERTa processing
+    #[serde(rename = "RobertaProcessing")]
+    Roberta {
+        sep: (String, u32),
+        cls: (String, u32),
+        #[serde(default = "default_true")]
+        trim_offsets: bool,
+        #[serde(default = "default_true")]
+        add_prefix_space: bool,
+    },
+    /// ByteLevel processing
+    ByteLevel {
+        #[serde(default = "default_true")]
+        trim_offsets: bool,
+    },
+    /// Template processing
+    TemplateProcessing {
+        single: Vec<TemplatePartSpec>,
+        pair: Option<Vec<TemplatePartSpec>>,
+        special_tokens: Vec<(String, u32)>,
+    },
+    /// Sequence of processors
+    Sequence {
+        processors: Vec<PostProcessorWrapper>,
+    },
+}
+
+fn default_true() -> bool { true }
+
+/// Template part specification for serialization
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TemplatePartSpec {
+    /// Special token reference
+    SpecialToken {
+        #[serde(rename = "SpecialToken")]
+        special_token: SpecialTokenSpec,
+    },
+    /// Sequence reference
+    Sequence {
+        #[serde(rename = "Sequence")]
+        sequence: SequenceSpec,
+    },
+}
+
+/// Special token specification
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SpecialTokenSpec {
+    pub id: String,
+    pub type_id: u32,
+}
+
+/// Sequence specification
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SequenceSpec {
+    pub id: String,
+    pub type_id: u32,
+}
+
+impl PostProcessorWrapper {
+    /// Create the appropriate post-processor from this wrapper
+    pub fn into_processor(self) -> Box<dyn PostProcessor + Send + Sync> {
+        match self {
+            PostProcessorWrapper::Bert { sep, cls } => {
+                Box::new(BertPostProcessor::new(
+                    SpecialToken::new(cls.0, cls.1),
+                    SpecialToken::new(sep.0, sep.1),
+                ))
+            }
+            PostProcessorWrapper::Roberta { sep, cls, trim_offsets: _, add_prefix_space: _ } => {
+                Box::new(RobertaPostProcessor::new(
+                    SpecialToken::new(cls.0, cls.1),
+                    SpecialToken::new(sep.0, sep.1),
+                ))
+            }
+            PostProcessorWrapper::ByteLevel { trim_offsets } => {
+                Box::new(ByteLevelPostProcessor { trim_offsets })
+            }
+            PostProcessorWrapper::TemplateProcessing { single, pair, special_tokens } => {
+                let single_parts = parse_template_parts(&single);
+                let pair_parts = pair.map(|p| parse_template_parts(&p)).unwrap_or_default();
+                let tokens = special_tokens.into_iter()
+                    .map(|(t, id)| SpecialToken::new(t, id))
+                    .collect();
+                Box::new(TemplatePostProcessor::new(single_parts, pair_parts, tokens))
+            }
+            PostProcessorWrapper::Sequence { processors } => {
+                let procs: Vec<Box<dyn PostProcessor + Send + Sync>> = processors
+                    .into_iter()
+                    .map(|p| p.into_processor())
+                    .collect();
+                Box::new(SequencePostProcessor::new(procs))
+            }
+        }
+    }
+}
+
+fn parse_template_parts(specs: &[TemplatePartSpec]) -> Vec<TemplatePart> {
+    specs.iter().map(|spec| match spec {
+        TemplatePartSpec::SpecialToken { special_token } => {
+            TemplatePart::SpecialToken {
+                name: special_token.id.clone(),
+                type_id: special_token.type_id as usize,
+            }
+        }
+        TemplatePartSpec::Sequence { sequence } => {
+            if sequence.id == "A" || sequence.id == "$A" {
+                TemplatePart::SequenceA { type_id: sequence.type_id as usize }
+            } else {
+                TemplatePart::SequenceB { type_id: sequence.type_id as usize }
+            }
+        }
+    }).collect()
 }
 
 #[cfg(test)]

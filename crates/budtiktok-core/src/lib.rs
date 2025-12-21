@@ -23,6 +23,7 @@
 pub mod error;
 pub mod version;
 pub mod runtime;
+pub mod autoconfig;
 pub mod allocator;
 pub mod tables;
 pub mod unicode;
@@ -35,7 +36,9 @@ pub mod encoding;
 pub mod tokenizer;
 pub mod normalizer;
 pub mod pretokenizer;
+pub mod pretokenizer_simd;
 pub mod postprocessor;
+pub mod decoder;
 pub mod special_tokens;
 pub mod memory;
 pub mod swar;
@@ -43,13 +46,18 @@ pub mod arena;
 pub mod simd_backends;
 pub mod loader;
 
+// HF-compatible pipeline (new architecture)
+pub mod pipeline;
+
 // SIMD utilities (required by wordpiece_hyper)
 pub mod avx512;
 
 // Tokenizer implementations
 pub mod wordpiece;       // Scalar WordPiece
 pub mod wordpiece_hyper; // SIMD WordPiece
+pub mod wordlevel;       // High-performance WordLevel tokenizer
 pub mod unigram;         // Unigram (SentencePiece)
+pub mod unigram_fast;    // High-performance Unigram (10x faster)
 pub mod bpe_fast;        // BPE utilities (Gpt2ByteEncoderFast)
 pub mod bpe_linear;      // Production BPE (OptimizedBpeEncoder)
 
@@ -63,14 +71,21 @@ pub use runtime::{
     RuntimeConfig, IsaSelection, ParallelismConfig, SystemInfo,
     system_info, apply_config, set_global_threads, get_global_threads,
 };
+pub use autoconfig::{AutoConfig, AutoConfigStats, get_auto_config, init_auto_config};
 pub use allocator::{
     current_allocator, has_custom_allocator, AllocatorKind, AllocatorStats,
     AllocationHint, TokenArena,
 };
-pub use encoding::Encoding;
+pub use encoding::{
+    Encoding,
+    // Padding
+    PaddingDirection, PaddingStrategy, PaddingParams, pad_encodings,
+    // Truncation
+    TruncationDirection, TruncationStrategy, TruncationParams, truncate_encoding,
+};
 pub use tokenizer::Tokenizer;
 pub use config::TokenizerConfig;
-pub use loader::load_tokenizer;
+pub use loader::{load_tokenizer, load_tokenizer_from_str};
 
 // Re-exports: Data structures
 pub use trie::{Trie, TrieBuilder, trie_from_vocab, CacheObliviousTrie, CacheObliviousTrieStats};
@@ -84,10 +99,39 @@ pub use normalizer::{
     LowercaseNormalizer, StripAccentsNormalizer,
     PrependNormalizer, ReplaceNormalizer, SequenceNormalizer,
     StreamingNormalizer, StreamingNormalizerState, SimdNormalizer,
+    // New normalizers
+    StripNormalizer, NmtNormalizer, PrecompiledNormalizer, NormalizerWrapper,
 };
-pub use pretokenizer::{PreTokenizer, PreToken, BertPreTokenizer, WhitespacePreTokenizer, MetaspacePreTokenizer};
-pub use postprocessor::{PostProcessor, BertPostProcessor, RobertaPostProcessor, SpecialToken};
-pub use special_tokens::{SpecialTokenMatcher, SpecialTokenMatcherBuilder, AddedToken, SpecialTokenMatch};
+pub use pretokenizer::{
+    PreTokenizer, PreToken, BertPreTokenizer, WhitespacePreTokenizer, MetaspacePreTokenizer,
+    ByteLevelPreTokenizer, SplitPreTokenizer, SplitBehavior, PunctuationPreTokenizer,
+    DigitsPreTokenizer, CharDelimiterSplit, UnicodeScriptsPreTokenizer, UnicodeScript,
+    RegexSplitPreTokenizer, SequencePreTokenizer, PrependScheme as PreTokenizerPrependScheme,
+};
+pub use pretokenizer_simd::{SimdBertPreTokenizer, SimdWhitespacePreTokenizer};
+pub use postprocessor::{
+    PostProcessor, BertPostProcessor, RobertaPostProcessor, SpecialToken,
+    SequencePostProcessor, ByteLevelPostProcessor, TemplatePostProcessor, TemplatePart,
+    PostProcessorWrapper, TemplatePartSpec, SpecialTokenSpec, SequenceSpec,
+};
+pub use decoder::{
+    Decoder, DecoderWrapper, ByteLevelDecoder, MetaspaceDecoder, WordPieceDecoder,
+    BPEDecoder, ByteFallbackDecoder, FuseDecoder, StripDecoder, ReplaceDecoder,
+    CTCDecoder, SequenceDecoder, PrependScheme,
+    byte_to_gpt2_char, gpt2_char_to_byte,
+    decode_batch_parallel, decode_chain_batch_parallel,
+};
+pub use special_tokens::{
+    SpecialTokenMatcher, SpecialTokenMatcherBuilder, AddedToken, SpecialTokenMatch,
+    ExtractedSegment, bert_special_tokens, gpt2_special_tokens, llama_special_tokens, t5_special_tokens,
+};
+
+// Re-exports: Pipeline (HF-compatible architecture)
+pub use pipeline::{
+    TokenizerPipeline, EncodeInput,
+    TokenizerModel, Token,
+    AddedVocabulary, ExtractedSegment as PipelineExtractedSegment,
+};
 
 // Re-exports: Memory utilities
 pub use memory::{
@@ -147,4 +191,23 @@ pub use bpe_linear::{
     BpeTokenizer, BpeConfig, MergeRule, parse_merges,
     // Legacy encoders (may be removed in future)
     TrieEncoder, FastLinearEncoder, DirectBpeEncoder, GreedyLinearEncoder,
+};
+
+// Re-exports: Unigram tokenizers
+pub use unigram::{UnigramTokenizer, UnigramConfig, UnigramPiece, SPIECE_UNDERLINE};
+pub use unigram_fast::{UnigramFast, UnigramFastConfig, UnigramTokenCache, normalize_for_hf, preprocess_text};
+
+// Re-exports: WordLevel tokenizer
+pub use wordlevel::{
+    WordLevelTokenizer, WordLevelConfig, WordLevelCache,
+    WordLevelPreToken, pretokenize_scalar, pretokenize_scalar_lowercase,
+    pretokenize_simd, is_whitespace, is_punctuation, is_cjk_character,
+    // Note: is_avx2_available and is_avx512_available exported from avx512 module
+};
+
+// Re-exports: Cache types
+pub use cache::{
+    CacheStats, ClockCache, ShardedCache, MultiLevelCache, MultiLevelCacheStats,
+    TokenCache, ShardedTokenCache, MultiLevelTokenCache,
+    CacheWarmer, WarmupConfig, WarmupResult,
 };

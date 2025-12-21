@@ -458,6 +458,28 @@ impl Tokenizer for WordPieceTokenizer {
         Ok(result)
     }
 
+    /// Parallel batch encoding for better throughput
+    fn encode_batch(
+        &self,
+        texts: &[&str],
+        add_special_tokens: bool,
+    ) -> Result<Vec<Encoding>> {
+        use rayon::prelude::*;
+
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if texts.len() == 1 {
+            return Ok(vec![self.encode(texts[0], add_special_tokens)?]);
+        }
+
+        texts
+            .par_iter()
+            .map(|text| self.encode(text, add_special_tokens))
+            .collect()
+    }
+
     fn save(&self, _path: &Path) -> Result<()> {
         // TODO: Implement saving
         Err(Error::Io(std::io::Error::new(

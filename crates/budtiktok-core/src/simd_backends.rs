@@ -424,7 +424,7 @@ pub mod x86 {
     }
 
     /// AVX-512 find whitespace (even faster with 64-byte chunks)
-    #[cfg(target_feature = "avx512f")]
+    #[cfg(all(target_feature = "avx512f", feature = "nightly"))]
     #[target_feature(enable = "avx512f", enable = "avx512bw")]
     pub unsafe fn find_whitespace_avx512(data: &[u8]) -> Option<usize> {
         let len = data.len();

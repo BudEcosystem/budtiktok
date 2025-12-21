@@ -13,6 +13,8 @@ jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
 # Enable all allocator options (for benchmarking)
 all-allocators = ["jemalloc", "mimalloc"]
+# Enable AVX-512 support (requires nightly Rust)
+nightly = []
 
 [dependencies]
 ahash.workspace = true
@@ -39,6 +41,9 @@ lazy_static.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 mimalloc = { workspace = true, optional = true }
 
+# For benchmark binary (can't use dev-dependencies in bins)
+tokenizers = { workspace = true }
+
 # Platform-specific dependencies
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
@@ -54,17 +59,49 @@ name = "scalar_tokenization"
 harness = false
 
 [[bench]]
-name = "bpe_benchmark"
-harness = false
-
-[[bench]]
-name = "bpe_extensive_benchmark"
-harness = false
-
-[[bench]]
-name = "bpe_scale_benchmark"
-harness = false
-
-[[bench]]
 name = "hf_tokenizers_benchmark"
 harness = false
+
+[[bench]]
+name = "unigram_benchmark"
+harness = false
+
+[[bench]]
+name = "wordlevel_benchmark"
+harness = false
+
+[[bench]]
+name = "decoder_benchmark"
+harness = false
+
+[[bin]]
+name = "run_1gb_benchmark"
+path = "benches/unigram_1gb_benchmark.rs"
+
+[[bin]]
+name = "accuracy_debug"
+path = "benches/accuracy_debug.rs"
+
+[[bin]]
+name = "deep_debug"
+path = "benches/deep_debug.rs"
+
+[[bin]]
+name = "test_specific"
+path = "benches/test_specific.rs"
+
+[[bin]]
+name = "fix_accuracy"
+path = "benches/fix_accuracy.rs"
+
+[[bin]]
+name = "full_accuracy_test"
+path = "benches/full_accuracy_test.rs"
+
+[[bin]]
+name = "cache_benchmark"
+path = "benches/cache_benchmark.rs"
+
+[[bin]]
+name = "wordlevel_1gb_benchmark"
+path = "benches/wordlevel_1gb_benchmark.rs"

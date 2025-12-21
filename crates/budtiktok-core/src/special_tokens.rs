@@ -20,9 +20,10 @@
 //! ```
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
+use serde::{Deserialize, Serialize};
 
 /// Represents an added token (special token)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddedToken {
     /// The token content/string
     pub content: String,
@@ -269,6 +270,144 @@ impl SpecialTokenMatcher {
     /// Check if the matcher has any non-normalized tokens
     pub fn has_non_normalized(&self) -> bool {
         self.has_non_normalized
+    }
+
+    /// Extract text segments and normalize non-special parts
+    ///
+    /// This method splits the text around special tokens and optionally
+    /// normalizes the non-special segments. Special tokens are never normalized.
+    ///
+    /// # Arguments
+    /// * `text` - The input text to process
+    /// * `normalizer` - Optional normalizer for non-special segments
+    ///
+    /// # Returns
+    /// A vector of (segment, is_special, token_id) tuples where normalized
+    /// segments are returned as owned Strings.
+    pub fn extract_and_normalize<N>(
+        &self,
+        text: &str,
+        normalizer: Option<&N>,
+    ) -> Vec<ExtractedSegment>
+    where
+        N: crate::normalizer::Normalizer,
+    {
+        let matches = self.find_all(text);
+        let mut result = Vec::with_capacity(matches.len() * 2 + 1);
+        let mut last_end = 0;
+
+        for m in &matches {
+            // Add text before the match (normalized if normalizer provided)
+            if m.start > last_end {
+                let segment = &text[last_end..m.start];
+                let content = if let Some(norm) = normalizer {
+                    norm.normalize(segment).into_owned()
+                } else {
+                    segment.to_string()
+                };
+
+                if !content.is_empty() {
+                    result.push(ExtractedSegment {
+                        content,
+                        is_special: false,
+                        token_id: None,
+                        token_idx: None,
+                    });
+                }
+            }
+
+            // Add the special token (never normalized)
+            let token = &self.tokens[m.token_idx];
+            result.push(ExtractedSegment {
+                content: token.content.clone(),
+                is_special: true,
+                token_id: Some(m.token_id),
+                token_idx: Some(m.token_idx),
+            });
+
+            last_end = m.end;
+        }
+
+        // Add remaining text after last match
+        if last_end < text.len() {
+            let segment = &text[last_end..];
+            let content = if let Some(norm) = normalizer {
+                norm.normalize(segment).into_owned()
+            } else {
+                segment.to_string()
+            };
+
+            if !content.is_empty() {
+                result.push(ExtractedSegment {
+                    content,
+                    is_special: false,
+                    token_id: None,
+                    token_idx: None,
+                });
+            }
+        }
+
+        // Handle text with no matches
+        if result.is_empty() && !text.is_empty() {
+            let content = if let Some(norm) = normalizer {
+                norm.normalize(text).into_owned()
+            } else {
+                text.to_string()
+            };
+
+            if !content.is_empty() {
+                result.push(ExtractedSegment {
+                    content,
+                    is_special: false,
+                    token_id: None,
+                    token_idx: None,
+                });
+            }
+        }
+
+        result
+    }
+
+    /// Find a token by its content
+    pub fn find_token(&self, content: &str) -> Option<&AddedToken> {
+        self.tokens.iter().find(|t| t.content == content)
+    }
+
+    /// Get token ID for a given content string
+    pub fn token_to_id(&self, content: &str) -> Option<u32> {
+        self.find_token(content).map(|t| t.id)
+    }
+
+    /// Get token content for a given ID
+    pub fn id_to_token(&self, id: u32) -> Option<&str> {
+        self.tokens.iter()
+            .find(|t| t.id == id)
+            .map(|t| t.content.as_str())
+    }
+}
+
+/// An extracted segment from special token processing
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedSegment {
+    /// The segment content (owned string)
+    pub content: String,
+    /// Whether this is a special token
+    pub is_special: bool,
+    /// The token ID if this is a special token
+    pub token_id: Option<u32>,
+    /// The token index in the matcher
+    pub token_idx: Option<usize>,
+}
+
+impl ExtractedSegment {
+    /// Check if the segment is empty
+    pub fn is_empty(&self) -> bool {
+        self.content.is_empty()
+    }
+
+    /// Get the length of the content
+    pub fn len(&self) -> usize {
+        self.content.len()
     }
 }
 

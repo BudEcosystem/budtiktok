@@ -25,10 +25,28 @@ path = "src/bin/gpu_kernel_only_benchmark.rs"
 name = "spwp-benchmark"
 path = "src/bin/spwp_benchmark.rs"
 
+[[bin]]
+name = "tei-benchmark"
+path = "src/bin/tei_benchmark.rs"
+
+[[bin]]
+name = "autoconfig-benchmark"
+path = "src/bin/autoconfig_benchmark.rs"
+
+[[bin]]
+name = "debug-accuracy"
+path = "src/bin/debug_accuracy.rs"
+
+[[bin]]
+name = "profile-bottleneck"
+path = "src/bin/profile_bottleneck.rs"
+
 [dependencies]
 budtiktok-core = { path = "../budtiktok-core" }
+budtiktok-hf-compat = { path = "../budtiktok-hf-compat" }
 budtiktok-gpu = { path = "../budtiktok-gpu", optional = true }
 tokenizers = "0.15"
+num_cpus = "1.16"
 
 # BlazeText (path to bud-sentinel)
 blazetext_wordpiece = { path = "../../../bud-sentinel/blazetext/wordpiece" }

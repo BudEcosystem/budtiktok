@@ -10,7 +10,7 @@
 
 use budtiktok_core::{load_tokenizer, Encoding, Tokenizer, TokenizerConfig};
 use budtiktok_core::wordpiece::{WordPieceConfig, WordPieceTokenizer};
-use budtiktok_core::bpe::{BpeConfig, BpeTokenizer, MergeRule};
+use budtiktok_core::bpe_linear::{BpeConfig, BpeTokenizer, MergeRule};
 use budtiktok_core::unigram::{UnigramConfig, UnigramPiece, UnigramTokenizer};
 use budtiktok_core::vocab::{Vocabulary, SpecialTokens};
 use ahash::AHashMap;

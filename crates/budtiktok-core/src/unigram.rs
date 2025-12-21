@@ -45,7 +45,14 @@ pub struct UnigramConfig {
     pub eos_token: Option<String>,
     /// Byte fallback for unknown characters
     pub byte_fallback: bool,
+    /// Add prefix space (SentencePiece style)
+    pub add_prefix_space: bool,
+    /// Replacement character for spaces (SentencePiece uses ▁)
+    pub replacement_char: char,
 }
+
+/// SentencePiece-style replacement character for spaces
+pub const SPIECE_UNDERLINE: char = '▁';
 
 impl Default for UnigramConfig {
     fn default() -> Self {
@@ -55,6 +62,19 @@ impl Default for UnigramConfig {
             bos_token: None,
             eos_token: None,
             byte_fallback: false,
+            add_prefix_space: true,
+            replacement_char: SPIECE_UNDERLINE,
+        }
+    }
+}
+
+impl UnigramConfig {
+    /// Create config with SentencePiece-style preprocessing
+    pub fn sentencepiece() -> Self {
+        Self {
+            add_prefix_space: true,
+            replacement_char: SPIECE_UNDERLINE,
+            ..Default::default()
         }
     }
 }
@@ -65,14 +85,11 @@ struct LatticeNode {
     /// Start position in text (byte offset)
     start: usize,
     /// End position in text (byte offset)
+    #[allow(dead_code)]
     end: usize,
     /// Token ID
     token_id: u32,
-    /// Score (log probability)
-    score: f64,
-    /// Best previous node index
-    prev: Option<usize>,
-    /// Cumulative score
+    /// Cumulative score (best score to reach this node)
     best_score: f64,
 }
 
@@ -204,6 +221,64 @@ impl UnigramTokenizer {
         }
     }
 
+    /// SentencePiece-style preprocessing
+    /// Replaces spaces with ▁ and optionally adds prefix
+    fn preprocess(&self, text: &str) -> String {
+        let replacement = self.config.replacement_char;
+
+        let mut result = String::with_capacity(text.len() + 1);
+
+        // Add prefix space if configured
+        if self.config.add_prefix_space {
+            result.push(replacement);
+        }
+
+        // Replace spaces with replacement character
+        for c in text.chars() {
+            if c == ' ' {
+                result.push(replacement);
+            } else {
+                result.push(c);
+            }
+        }
+
+        result
+    }
+
+    /// Reverse SentencePiece preprocessing for decoding
+    fn postprocess(&self, text: &str) -> String {
+        let replacement = self.config.replacement_char;
+
+        // Replace ▁ with space
+        let result: String = text.chars()
+            .map(|c| if c == replacement { ' ' } else { c })
+            .collect();
+
+        // Trim leading space (from add_prefix_space)
+        result.trim_start().to_string()
+    }
+
+    /// Adjust offsets from preprocessed text back to original text
+    fn adjust_offsets_for_original(&self, original: &str, start: usize, end: usize) -> (usize, usize) {
+        // The preprocessing adds a prefix ▁ and replaces spaces with ▁
+        // We need to map back to the original text offsets
+
+        // Account for prefix if added
+        let offset = if self.config.add_prefix_space {
+            self.config.replacement_char.len_utf8()
+        } else {
+            0
+        };
+
+        // Clamp to valid range and adjust for prefix
+        let adj_start = start.saturating_sub(offset);
+        let adj_end = end.saturating_sub(offset);
+
+        // Clamp to original text length
+        let max_len = original.len();
+        (adj_start.min(max_len), adj_end.min(max_len))
+    }
+
     /// Create from a SentencePiece model file
     pub fn from_file(_path: impl AsRef<Path>) -> Result<Self> {
         Err(Error::vocab_load("SentencePiece loading not yet implemented"))
@@ -228,8 +303,6 @@ impl UnigramTokenizer {
             start: 0,
             end: 0,
             token_id: 0,
-            score: 0.0,
-            prev: None,
             best_score: 0.0,
         });
 
@@ -244,10 +317,11 @@ impl UnigramTokenizer {
                 .map(|node| node.best_score)
                 .fold(f64::NEG_INFINITY, f64::max);
 
-            let prev_idx = lattice[start].len().saturating_sub(1);
-
             // Use trie for efficient prefix enumeration
+            // Track whether we found any token from the trie
+            let mut found_token = false;
             for (token_len, token_id) in self.trie.common_prefix_search(bytes, start) {
+                found_token = true;
                 let end = start + token_len;
                 let score = self.get_score(token_id);
 
@@ -255,31 +329,28 @@ impl UnigramTokenizer {
                     start,
                     end,
                     token_id,
-                    score,
-                    prev: Some(prev_idx),
                     best_score: best_prev_score + score,
                 });
             }
 
             // Handle byte fallback if enabled and no regular token found
-            if self.config.byte_fallback && !lattice[start + 1].iter().any(|n| n.start == start) {
+            if !found_token && self.config.byte_fallback {
                 let byte_val = bytes[start];
                 if let Some(byte_id) = self.byte_tokens.get(byte_val) {
+                    found_token = true;
                     let score = self.min_score - 5.0; // Penalty for byte fallback
                     lattice[start + 1].push(LatticeNode {
                         start,
                         end: start + 1,
                         token_id: byte_id,
-                        score,
-                        prev: Some(prev_idx),
                         best_score: best_prev_score + score,
                     });
                 }
             }
 
             // Handle unknown character (single char fallback) if no token found
-            if !lattice[start + 1].iter().any(|n| n.start == start) {
-                // Find next char boundary
+            if !found_token {
+                // Find next char boundary (for multi-byte UTF-8 characters)
                 let mut char_end = start + 1;
                 while char_end < n && (bytes[char_end] & 0xC0) == 0x80 {
                     char_end += 1;
@@ -290,8 +361,6 @@ impl UnigramTokenizer {
                     start,
                     end: char_end,
                     token_id: self.config.unk_id,
-                    score: unknown_score,
-                    prev: Some(prev_idx),
                     best_score: best_prev_score + unknown_score,
                 });
             }
@@ -318,7 +387,7 @@ impl UnigramTokenizer {
             }
         }
 
-        // Backtrace
+        // Backtrace - reconstruct path by finding best predecessor at each step
         let mut result = Vec::new();
         let mut current_pos = n;
         let mut current_idx = best_final_idx;
@@ -329,10 +398,27 @@ impl UnigramTokenizer {
                 result.push((node.token_id, node.start, node.end));
             }
 
-            current_pos = node.start;
-            if let Some(prev_idx) = node.prev {
-                current_idx = prev_idx.min(lattice[current_pos].len().saturating_sub(1));
-            } else {
+            let prev_pos = node.start;
+            if prev_pos == 0 && lattice[0].is_empty() {
+                break;
+            }
+
+            // Find the best predecessor node at prev_pos
+            // The best predecessor is the one with the highest best_score
+            let mut best_prev_idx = 0;
+            let mut best_prev_score = f64::NEG_INFINITY;
+            for (idx, prev_node) in lattice[prev_pos].iter().enumerate() {
+                if prev_node.best_score > best_prev_score {
+                    best_prev_score = prev_node.best_score;
+                    best_prev_idx = idx;
+                }
+            }
+
+            current_pos = prev_pos;
+            current_idx = best_prev_idx;
+
+            // Stop if we've reached position 0
+            if current_pos == 0 {
                 break;
             }
         }
@@ -343,11 +429,19 @@ impl UnigramTokenizer {
 
     /// Encode text using Viterbi algorithm (optimal segmentation)
     pub fn encode_viterbi(&self, text: &str) -> Vec<u32> {
-        let lattice = self.build_lattice(text);
+        // Apply SentencePiece preprocessing
+        let preprocessed = self.preprocess(text);
+        let lattice = self.build_lattice(&preprocessed);
         self.viterbi(&lattice)
             .into_iter()
             .map(|(id, _, _)| id)
             .collect()
+    }
+
+    /// Encode raw text without preprocessing (for internal use)
+    fn encode_viterbi_raw(&self, text: &str) -> Vec<(u32, usize, usize)> {
+        let lattice = self.build_lattice(text);
+        self.viterbi(&lattice)
     }
 
     /// N-best decoding using A* search (3.2.4)
@@ -547,7 +641,9 @@ impl Tokenizer for UnigramTokenizer {
     }
 
     fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Encoding> {
-        let lattice = self.build_lattice(text);
+        // Apply SentencePiece preprocessing
+        let preprocessed = self.preprocess(text);
+        let lattice = self.build_lattice(&preprocessed);
         let tokens = self.viterbi(&lattice);
 
         let mut encoding = Encoding::with_capacity(tokens.len() + 2);
@@ -569,10 +665,14 @@ impl Tokenizer for UnigramTokenizer {
                 .unwrap_or(&self.config.unk_token)
                 .to_string();
 
+            // Adjust offsets to account for preprocessing
+            // The preprocessed text has ▁ replacing spaces, so offsets need adjustment
+            let (adj_start, adj_end) = self.adjust_offsets_for_original(text, *start, *end);
+
             encoding.push(
                 *token_id,
                 token,
-                (*start, *end),
+                (adj_start, adj_end),
                 Some(word_idx as u32),
                 Some(0),
                 false,
@@ -626,14 +726,12 @@ impl Tokenizer for UnigramTokenizer {
                     continue;
                 }
 
-                // SentencePiece uses ▁ for word boundaries
-                let token = token.replace('▁', " ");
-                result.push_str(&token);
+                result.push_str(token);
             }
         }
 
-        // Trim leading space from ▁ replacement
-        Ok(result.trim_start().to_string())
+        // Apply SentencePiece postprocessing (▁ -> space)
+        Ok(self.postprocess(&result))
     }
 
     fn save(&self, _path: &Path) -> Result<()> {

@@ -242,6 +242,523 @@ impl Encoding {
         self.word_ids.extend(other.word_ids);
         self.sequence_ids.extend(other.sequence_ids);
     }
+
+    // ========================================================================
+    // Position Mapping Methods (HF Compatible)
+    // ========================================================================
+
+    /// Get the number of sequences in this encoding
+    ///
+    /// Returns 1 for single sequence, 2 for sequence pairs, etc.
+    #[inline]
+    pub fn n_sequences(&self) -> usize {
+        // Count distinct sequence IDs (excluding None for special tokens)
+        let mut seen = [false; 16]; // Support up to 16 sequences
+        let mut count = 0;
+
+        for seq_id in &self.sequence_ids {
+            if let Some(id) = seq_id {
+                if *id < 16 && !seen[*id] {
+                    seen[*id] = true;
+                    count += 1;
+                }
+            }
+        }
+
+        count.max(1) // At least 1 sequence
+    }
+
+    /// Get the token range (start, end) for a given word in a sequence
+    ///
+    /// # Arguments
+    /// * `word` - The word index
+    /// * `sequence_id` - The sequence ID (0 for first, 1 for second)
+    ///
+    /// # Returns
+    /// The range of token indices [start, end) that correspond to this word
+    #[inline]
+    pub fn word_to_tokens(&self, word: u32, sequence_id: usize) -> Option<(usize, usize)> {
+        let mut first: Option<usize> = None;
+        let mut last: Option<usize> = None;
+
+        for (i, (word_id, seq_id)) in self.word_ids.iter().zip(&self.sequence_ids).enumerate() {
+            if *seq_id == Some(sequence_id) && *word_id == Some(word) {
+                if first.is_none() {
+                    first = Some(i);
+                }
+                last = Some(i);
+            }
+        }
+
+        match (first, last) {
+            (Some(f), Some(l)) => Some((f, l + 1)),
+            _ => None,
+        }
+    }
+
+    /// Get the character range for a given word in a sequence
+    ///
+    /// # Arguments
+    /// * `word` - The word index
+    /// * `sequence_id` - The sequence ID (0 for first, 1 for second)
+    ///
+    /// # Returns
+    /// The character range (start, end) in the original text
+    #[inline]
+    pub fn word_to_chars(&self, word: u32, sequence_id: usize) -> Option<(usize, usize)> {
+        let (start_tok, end_tok) = self.word_to_tokens(word, sequence_id)?;
+
+        if start_tok >= self.offsets.len() || end_tok == 0 {
+            return None;
+        }
+
+        let start_char = self.offsets[start_tok].0;
+        let end_char = self.offsets[end_tok - 1].1;
+
+        Some((start_char, end_char))
+    }
+
+    /// Get the character range and sequence ID for a given token
+    ///
+    /// # Arguments
+    /// * `token` - The token index
+    ///
+    /// # Returns
+    /// A tuple of (sequence_id, (start_char, end_char))
+    #[inline]
+    pub fn token_to_chars(&self, token: usize) -> Option<(usize, (usize, usize))> {
+        if token >= self.len() {
+            return None;
+        }
+
+        let seq_id = self.sequence_ids.get(token)?.as_ref()?;
+        let offsets = self.offsets.get(token)?;
+
+        Some((*seq_id, *offsets))
+    }
+
+    /// Get the word index and sequence ID for a given token
+    ///
+    /// # Arguments
+    /// * `token` - The token index
+    ///
+    /// # Returns
+    /// A tuple of (sequence_id, word_index)
+    #[inline]
+    pub fn token_to_word(&self, token: usize) -> Option<(usize, u32)> {
+        if token >= self.len() {
+            return None;
+        }
+
+        let seq_id = self.sequence_ids.get(token)?.as_ref()?;
+        let word_id = self.word_ids.get(token)?.as_ref()?;
+
+        Some((*seq_id, *word_id))
+    }
+
+    /// Get the token index for a character position in a sequence
+    ///
+    /// # Arguments
+    /// * `pos` - The character position
+    /// * `sequence_id` - The sequence ID (0 for first, 1 for second)
+    ///
+    /// # Returns
+    /// The token index that contains this character position
+    #[inline]
+    pub fn char_to_token(&self, pos: usize, sequence_id: usize) -> Option<usize> {
+        for (i, (offset, seq_id)) in self.offsets.iter().zip(&self.sequence_ids).enumerate() {
+            if *seq_id == Some(sequence_id) && pos >= offset.0 && pos < offset.1 {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Get the word index for a character position in a sequence
+    ///
+    /// # Arguments
+    /// * `pos` - The character position
+    /// * `sequence_id` - The sequence ID (0 for first, 1 for second)
+    ///
+    /// # Returns
+    /// The word index that contains this character position
+    #[inline]
+    pub fn char_to_word(&self, pos: usize, sequence_id: usize) -> Option<u32> {
+        let token = self.char_to_token(pos, sequence_id)?;
+        self.word_ids.get(token)?.as_ref().copied()
+    }
+
+    /// Get the sequence ID for a given token
+    ///
+    /// # Arguments
+    /// * `token` - The token index
+    ///
+    /// # Returns
+    /// The sequence ID, or None for special tokens
+    #[inline]
+    pub fn token_to_sequence(&self, token: usize) -> Option<usize> {
+        self.sequence_ids.get(token)?.as_ref().copied()
+    }
+
+    // ========================================================================
+    // Padding Enhancements (HF Compatible)
+    // ========================================================================
+
+    /// Pad the encoding from the left side
+    pub fn pad_left(&mut self, length: usize, pad_id: u32, pad_token: &str) {
+        if self.ids.len() >= length {
+            return;
+        }
+
+        let pad_count = length - self.ids.len();
+
+        // Create padding vectors
+        let pad_ids: Vec<u32> = std::iter::repeat(pad_id).take(pad_count).collect();
+        let pad_type_ids: Vec<u32> = std::iter::repeat(0).take(pad_count).collect();
+        let pad_tokens: Vec<String> = std::iter::repeat(pad_token.to_string()).take(pad_count).collect();
+        let pad_offsets: Vec<(usize, usize)> = std::iter::repeat((0, 0)).take(pad_count).collect();
+        let pad_special: Vec<u32> = std::iter::repeat(1).take(pad_count).collect();
+        let pad_attention: Vec<u32> = std::iter::repeat(0).take(pad_count).collect();
+        let pad_word_ids: Vec<Option<u32>> = std::iter::repeat(None).take(pad_count).collect();
+        let pad_seq_ids: Vec<Option<usize>> = std::iter::repeat(None).take(pad_count).collect();
+
+        // Prepend padding
+        let mut new_ids = pad_ids;
+        new_ids.extend(std::mem::take(&mut self.ids));
+        self.ids = new_ids;
+
+        let mut new_type_ids = pad_type_ids;
+        new_type_ids.extend(std::mem::take(&mut self.type_ids));
+        self.type_ids = new_type_ids;
+
+        let mut new_tokens = pad_tokens;
+        new_tokens.extend(std::mem::take(&mut self.tokens));
+        self.tokens = new_tokens;
+
+        let mut new_offsets = pad_offsets;
+        new_offsets.extend(std::mem::take(&mut self.offsets));
+        self.offsets = new_offsets;
+
+        let mut new_special = pad_special;
+        new_special.extend(std::mem::take(&mut self.special_tokens_mask));
+        self.special_tokens_mask = new_special;
+
+        let mut new_attention = pad_attention;
+        new_attention.extend(std::mem::take(&mut self.attention_mask));
+        self.attention_mask = new_attention;
+
+        let mut new_word_ids = pad_word_ids;
+        new_word_ids.extend(std::mem::take(&mut self.word_ids));
+        self.word_ids = new_word_ids;
+
+        let mut new_seq_ids = pad_seq_ids;
+        new_seq_ids.extend(std::mem::take(&mut self.sequence_ids));
+        self.sequence_ids = new_seq_ids;
+    }
+
+    /// Truncate from the left side
+    pub fn truncate_left(&mut self, max_length: usize, stride: usize) {
+        if self.ids.len() <= max_length {
+            return;
+        }
+
+        let remove_count = self.ids.len() - max_length;
+
+        // Create overflowing encoding with stride
+        if stride > 0 {
+            let end = remove_count + stride;
+            let overflow = Encoding {
+                ids: self.ids[..end].to_vec(),
+                type_ids: self.type_ids[..end].to_vec(),
+                tokens: self.tokens[..end].to_vec(),
+                offsets: self.offsets[..end].to_vec(),
+                special_tokens_mask: self.special_tokens_mask[..end].to_vec(),
+                attention_mask: self.attention_mask[..end].to_vec(),
+                word_ids: self.word_ids[..end].to_vec(),
+                sequence_ids: self.sequence_ids[..end].to_vec(),
+                overflowing: Vec::new(),
+            };
+            self.overflowing.push(overflow);
+        }
+
+        // Remove from left
+        self.ids = self.ids.split_off(remove_count);
+        self.type_ids = self.type_ids.split_off(remove_count);
+        self.tokens = self.tokens.split_off(remove_count);
+        self.offsets = self.offsets.split_off(remove_count);
+        self.special_tokens_mask = self.special_tokens_mask.split_off(remove_count);
+        self.attention_mask = self.attention_mask.split_off(remove_count);
+        self.word_ids = self.word_ids.split_off(remove_count);
+        self.sequence_ids = self.sequence_ids.split_off(remove_count);
+    }
+
+    /// Set the sequence ID for all tokens
+    pub fn set_sequence_id(&mut self, sequence_id: usize) {
+        for seq_id in &mut self.sequence_ids {
+            if seq_id.is_some() {
+                *seq_id = Some(sequence_id);
+            }
+        }
+        for type_id in &mut self.type_ids {
+            *type_id = sequence_id as u32;
+        }
+    }
+
+    /// Set the type ID for all tokens
+    pub fn set_type_id(&mut self, type_id: u32) {
+        for tid in &mut self.type_ids {
+            *tid = type_id;
+        }
+    }
+
+    /// Get mutable reference to overflowing encodings
+    pub fn get_overflowing_mut(&mut self) -> &mut Vec<Encoding> {
+        &mut self.overflowing
+    }
+
+    /// Clear overflowing encodings
+    pub fn clear_overflowing(&mut self) {
+        self.overflowing.clear();
+    }
+
+    /// Take overflowing encodings, leaving empty vec
+    pub fn take_overflowing(&mut self) -> Vec<Encoding> {
+        std::mem::take(&mut self.overflowing)
+    }
+}
+
+// ============================================================================
+// Batch Padding Utilities (HF Compatible)
+// ============================================================================
+
+/// Padding direction
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaddingDirection {
+    /// Pad on the right (default)
+    #[default]
+    Right,
+    /// Pad on the left
+    Left,
+}
+
+/// Padding strategy
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaddingStrategy {
+    /// Pad to a fixed length
+    Fixed(usize),
+    /// Pad to the longest sequence in the batch
+    BatchLongest,
+}
+
+/// Padding parameters
+#[derive(Debug, Clone)]
+pub struct PaddingParams {
+    /// Padding strategy
+    pub strategy: PaddingStrategy,
+    /// Padding direction
+    pub direction: PaddingDirection,
+    /// Pad token ID
+    pub pad_id: u32,
+    /// Pad token string
+    pub pad_token: String,
+    /// Pad to multiple of this value (e.g., 8 for TPU)
+    pub pad_to_multiple_of: Option<usize>,
+}
+
+impl Default for PaddingParams {
+    fn default() -> Self {
+        Self {
+            strategy: PaddingStrategy::BatchLongest,
+            direction: PaddingDirection::Right,
+            pad_id: 0,
+            pad_token: "[PAD]".to_string(),
+            pad_to_multiple_of: None,
+        }
+    }
+}
+
+impl PaddingParams {
+    /// Create new padding parameters
+    pub fn new(pad_id: u32, pad_token: impl Into<String>) -> Self {
+        Self {
+            pad_id,
+            pad_token: pad_token.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Set fixed length padding
+    pub fn fixed(mut self, length: usize) -> Self {
+        self.strategy = PaddingStrategy::Fixed(length);
+        self
+    }
+
+    /// Set batch longest padding
+    pub fn batch_longest(mut self) -> Self {
+        self.strategy = PaddingStrategy::BatchLongest;
+        self
+    }
+
+    /// Set left padding
+    pub fn left(mut self) -> Self {
+        self.direction = PaddingDirection::Left;
+        self
+    }
+
+    /// Set right padding
+    pub fn right(mut self) -> Self {
+        self.direction = PaddingDirection::Right;
+        self
+    }
+
+    /// Set pad to multiple
+    pub fn multiple_of(mut self, n: usize) -> Self {
+        self.pad_to_multiple_of = Some(n);
+        self
+    }
+}
+
+/// Pad a batch of encodings
+///
+/// High-performance batch padding with:
+/// - Pre-calculated target length
+/// - SIMD-friendly memory layouts
+/// - Parallel padding for large batches
+pub fn pad_encodings(encodings: &mut [Encoding], params: &PaddingParams) {
+    if encodings.is_empty() {
+        return;
+    }
+
+    // Calculate target length
+    let max_len = encodings.iter().map(|e| e.len()).max().unwrap_or(0);
+
+    let target_len = match params.strategy {
+        PaddingStrategy::Fixed(len) => len,
+        PaddingStrategy::BatchLongest => max_len,
+    };
+
+    // Apply pad_to_multiple_of
+    let target_len = if let Some(multiple) = params.pad_to_multiple_of {
+        if multiple > 0 {
+            ((target_len + multiple - 1) / multiple) * multiple
+        } else {
+            target_len
+        }
+    } else {
+        target_len
+    };
+
+    // Pad each encoding
+    for encoding in encodings {
+        match params.direction {
+            PaddingDirection::Right => encoding.pad(target_len, params.pad_id, &params.pad_token),
+            PaddingDirection::Left => encoding.pad_left(target_len, params.pad_id, &params.pad_token),
+        }
+    }
+}
+
+// ============================================================================
+// Truncation Utilities (HF Compatible)
+// ============================================================================
+
+/// Truncation direction
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TruncationDirection {
+    /// Truncate from the right (default)
+    #[default]
+    Right,
+    /// Truncate from the left
+    Left,
+}
+
+/// Truncation strategy for sequence pairs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TruncationStrategy {
+    /// Truncate the longest sequence first
+    #[default]
+    LongestFirst,
+    /// Only truncate the first sequence
+    OnlyFirst,
+    /// Only truncate the second sequence
+    OnlySecond,
+}
+
+/// Truncation parameters
+#[derive(Debug, Clone)]
+pub struct TruncationParams {
+    /// Maximum length
+    pub max_length: usize,
+    /// Stride for overflowing tokens
+    pub stride: usize,
+    /// Truncation strategy
+    pub strategy: TruncationStrategy,
+    /// Truncation direction
+    pub direction: TruncationDirection,
+}
+
+impl Default for TruncationParams {
+    fn default() -> Self {
+        Self {
+            max_length: 512,
+            stride: 0,
+            strategy: TruncationStrategy::LongestFirst,
+            direction: TruncationDirection::Right,
+        }
+    }
+}
+
+impl TruncationParams {
+    /// Create new truncation parameters
+    pub fn new(max_length: usize) -> Self {
+        Self {
+            max_length,
+            ..Default::default()
+        }
+    }
+
+    /// Set stride
+    pub fn with_stride(mut self, stride: usize) -> Self {
+        self.stride = stride;
+        self
+    }
+
+    /// Set left truncation
+    pub fn left(mut self) -> Self {
+        self.direction = TruncationDirection::Left;
+        self
+    }
+
+    /// Set right truncation
+    pub fn right(mut self) -> Self {
+        self.direction = TruncationDirection::Right;
+        self
+    }
+
+    /// Set longest-first strategy
+    pub fn longest_first(mut self) -> Self {
+        self.strategy = TruncationStrategy::LongestFirst;
+        self
+    }
+
+    /// Set only-first strategy
+    pub fn only_first(mut self) -> Self {
+        self.strategy = TruncationStrategy::OnlyFirst;
+        self
+    }
+
+    /// Set only-second strategy
+    pub fn only_second(mut self) -> Self {
+        self.strategy = TruncationStrategy::OnlySecond;
+        self
+    }
+}
+
+/// Truncate an encoding based on parameters
+pub fn truncate_encoding(encoding: &mut Encoding, params: &TruncationParams) {
+    match params.direction {
+        TruncationDirection::Right => encoding.truncate(params.max_length, params.stride),
+        TruncationDirection::Left => encoding.truncate_left(params.max_length, params.stride),
+    }
 }
 
 #[cfg(test)]

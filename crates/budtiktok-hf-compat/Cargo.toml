@@ -1,0 +1,25 @@
+[package]
+name = "budtiktok-hf-compat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HuggingFace tokenizers compatibility layer for BudTikTok"
+
+[features]
+default = []
+# Fall back to HuggingFace tokenizers for unsupported models
+hf-fallback = ["dep:tokenizers"]
+
+[dependencies]
+budtiktok-core = { path = "../budtiktok-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Optional HF fallback
+tokenizers = { workspace = true, optional = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+tokenizers = { workspace = true }

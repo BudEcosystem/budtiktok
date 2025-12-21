@@ -620,6 +620,326 @@ impl PreTokenizer for DigitsPreTokenizer {
     }
 }
 
+/// CharDelimiterSplit pre-tokenizer - splits on a single character
+///
+/// High-performance character-based splitting with O(1) character comparison.
+#[derive(Debug, Clone, Copy)]
+pub struct CharDelimiterSplit {
+    /// The delimiter character
+    pub delimiter: char,
+}
+
+impl CharDelimiterSplit {
+    pub fn new(delimiter: char) -> Self {
+        Self { delimiter }
+    }
+}
+
+impl PreTokenizer for CharDelimiterSplit {
+    fn pre_tokenize(&self, text: &str) -> Vec<PreToken> {
+        let mut tokens = Vec::new();
+        let mut current = String::new();
+        let mut current_start = 0;
+
+        for (i, c) in text.char_indices() {
+            if c == self.delimiter {
+                if !current.is_empty() {
+                    tokens.push(PreToken::new(
+                        std::mem::take(&mut current),
+                        current_start,
+                        i,
+                    ));
+                }
+                current_start = i + c.len_utf8();
+            } else {
+                if current.is_empty() {
+                    current_start = i;
+                }
+                current.push(c);
+            }
+        }
+
+        if !current.is_empty() {
+            tokens.push(PreToken::new(current, current_start, text.len()));
+        }
+
+        tokens
+    }
+}
+
+/// Unicode script identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnicodeScript {
+    Latin,
+    Han,      // Also includes Hiragana, Katakana for SentencePiece compatibility
+    Common,   // Numbers, punctuation, etc.
+    Unknown,
+    Any,      // Spaces join with any script
+}
+
+/// Get the Unicode script for a character
+/// Uses SentencePiece-compatible grouping (Hiragana/Katakana -> Han)
+fn get_unicode_script(c: char) -> UnicodeScript {
+    // Special case: space is "any" script (joins with neighbors)
+    if c == ' ' {
+        return UnicodeScript::Any;
+    }
+
+    // Special case: U+30FC (ー) is Han
+    if c as u32 == 0x30FC {
+        return UnicodeScript::Han;
+    }
+
+    // Check Unicode blocks
+    let code = c as u32;
+
+    // Latin script ranges
+    if (0x0041..=0x005A).contains(&code)  // A-Z
+        || (0x0061..=0x007A).contains(&code)  // a-z
+        || (0x00C0..=0x00D6).contains(&code)  // Latin Extended-A
+        || (0x00D8..=0x00F6).contains(&code)
+        || (0x00F8..=0x00FF).contains(&code)
+        || (0x0100..=0x017F).contains(&code)  // Latin Extended-A
+        || (0x0180..=0x024F).contains(&code)  // Latin Extended-B
+    {
+        return UnicodeScript::Latin;
+    }
+
+    // CJK (Han + Hiragana + Katakana grouped together for SentencePiece)
+    if (0x4E00..=0x9FFF).contains(&code)      // CJK Unified Ideographs
+        || (0x3400..=0x4DBF).contains(&code)  // CJK Extension A
+        || (0x3040..=0x309F).contains(&code)  // Hiragana -> Han
+        || (0x30A0..=0x30FF).contains(&code)  // Katakana -> Han
+        || (0xFF65..=0xFF9F).contains(&code)  // Halfwidth Katakana -> Han
+        || (0x20000..=0x2A6DF).contains(&code) // CJK Extension B
+    {
+        return UnicodeScript::Han;
+    }
+
+    // Common script (numbers, punctuation, symbols)
+    if (0x0030..=0x0039).contains(&code)      // 0-9
+        || (0x0020..=0x002F).contains(&code)  // Space and punctuation
+        || (0x003A..=0x0040).contains(&code)  // More punctuation
+        || (0x005B..=0x0060).contains(&code)
+        || (0x007B..=0x007E).contains(&code)
+        || (0x00A0..=0x00BF).contains(&code)  // Latin-1 punctuation
+        || (0x2000..=0x206F).contains(&code)  // General punctuation
+        || (0x3000..=0x303F).contains(&code)  // CJK punctuation
+        || (0xFF00..=0xFF0F).contains(&code)  // Fullwidth punctuation
+        || (0xFF1A..=0xFF20).contains(&code)
+    {
+        return UnicodeScript::Common;
+    }
+
+    UnicodeScript::Unknown
+}
+
+/// UnicodeScripts pre-tokenizer - splits on Unicode script boundaries
+///
+/// Separates text into segments based on Unicode script changes.
+/// Compatible with SentencePiece behavior (Hiragana/Katakana grouped with Han).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UnicodeScriptsPreTokenizer;
+
+impl UnicodeScriptsPreTokenizer {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl PreTokenizer for UnicodeScriptsPreTokenizer {
+    fn pre_tokenize(&self, text: &str) -> Vec<PreToken> {
+        let mut tokens = Vec::new();
+        let mut current = String::new();
+        let mut current_start = 0;
+        let mut last_script: Option<UnicodeScript> = None;
+
+        for (i, c) in text.char_indices() {
+            let script = get_unicode_script(c);
+
+            // Check if we should split here
+            let should_split = match (last_script, script) {
+                // Any script continues previous
+                (_, UnicodeScript::Any) => false,
+                // Any script precedes current
+                (Some(UnicodeScript::Any), _) => false,
+                // Same script continues
+                (Some(prev), curr) if prev == curr => false,
+                // No previous script
+                (None, _) => false,
+                // Different scripts -> split
+                (Some(_), _) => true,
+            };
+
+            if should_split {
+                if !current.is_empty() {
+                    tokens.push(PreToken::new(
+                        std::mem::take(&mut current),
+                        current_start,
+                        i,
+                    ));
+                }
+                current_start = i;
+            }
+
+            if current.is_empty() {
+                current_start = i;
+            }
+            current.push(c);
+
+            // Update last script (but ignore Any)
+            if script != UnicodeScript::Any {
+                last_script = Some(script);
+            }
+        }
+
+        if !current.is_empty() {
+            tokens.push(PreToken::new(current, current_start, text.len()));
+        }
+
+        tokens
+    }
+}
+
+/// Regex-based split pre-tokenizer
+///
+/// Uses fancy-regex for full regex support including lookahead/lookbehind.
+#[derive(Debug, Clone)]
+pub struct RegexSplitPreTokenizer {
+    /// The compiled regex pattern
+    pattern: fancy_regex::Regex,
+    /// Original pattern string (for serialization)
+    pattern_str: String,
+    /// Behavior when pattern is found
+    pub behavior: SplitBehavior,
+    /// Whether to invert the pattern
+    pub invert: bool,
+}
+
+impl RegexSplitPreTokenizer {
+    pub fn new(pattern: &str, behavior: SplitBehavior) -> Result<Self, fancy_regex::Error> {
+        let regex = fancy_regex::Regex::new(pattern)?;
+        Ok(Self {
+            pattern: regex,
+            pattern_str: pattern.to_string(),
+            behavior,
+            invert: false,
+        })
+    }
+
+    pub fn with_invert(mut self, invert: bool) -> Self {
+        self.invert = invert;
+        self
+    }
+
+    /// Get the pattern string
+    pub fn pattern(&self) -> &str {
+        &self.pattern_str
+    }
+}
+
+impl PreTokenizer for RegexSplitPreTokenizer {
+    fn pre_tokenize(&self, text: &str) -> Vec<PreToken> {
+        let mut tokens = Vec::new();
+
+        if self.invert {
+            // Match mode: extract matches as tokens
+            for mat in self.pattern.find_iter(text) {
+                if let Ok(m) = mat {
+                    tokens.push(PreToken::new(
+                        m.as_str().to_string(),
+                        m.start(),
+                        m.end(),
+                    ));
+                }
+            }
+        } else {
+            // Split mode: split on matches
+            let mut last_end = 0;
+
+            for mat in self.pattern.find_iter(text) {
+                if let Ok(m) = mat {
+                    // Add text before match
+                    if m.start() > last_end {
+                        tokens.push(PreToken::new(
+                            text[last_end..m.start()].to_string(),
+                            last_end,
+                            m.start(),
+                        ));
+                    }
+
+                    // Handle the match based on behavior
+                    match self.behavior {
+                        SplitBehavior::Removed => {}
+                        SplitBehavior::Isolated => {
+                            tokens.push(PreToken::new(
+                                m.as_str().to_string(),
+                                m.start(),
+                                m.end(),
+                            ));
+                        }
+                        SplitBehavior::MergedWithPrevious => {
+                            if let Some(last) = tokens.last_mut() {
+                                last.text.push_str(m.as_str());
+                                last.end = m.end();
+                            } else {
+                                tokens.push(PreToken::new(
+                                    m.as_str().to_string(),
+                                    m.start(),
+                                    m.end(),
+                                ));
+                            }
+                        }
+                        SplitBehavior::MergedWithNext => {
+                            // Store for merging with next token
+                            tokens.push(PreToken::new(
+                                m.as_str().to_string(),
+                                m.start(),
+                                m.end(),
+                            ));
+                        }
+                    }
+
+                    last_end = m.end();
+                }
+            }
+
+            // Add remaining text
+            if last_end < text.len() {
+                // Handle MergedWithNext by joining with previous delimiter
+                if matches!(self.behavior, SplitBehavior::MergedWithNext) {
+                    if let Some(last) = tokens.last_mut() {
+                        if last.end == last_end {
+                            last.text.push_str(&text[last_end..]);
+                            last.end = text.len();
+                        } else {
+                            tokens.push(PreToken::new(
+                                text[last_end..].to_string(),
+                                last_end,
+                                text.len(),
+                            ));
+                        }
+                    } else {
+                        tokens.push(PreToken::new(
+                            text[last_end..].to_string(),
+                            last_end,
+                            text.len(),
+                        ));
+                    }
+                } else {
+                    tokens.push(PreToken::new(
+                        text[last_end..].to_string(),
+                        last_end,
+                        text.len(),
+                    ));
+                }
+            }
+        }
+
+        tokens
+    }
+}
+
 /// Sequence pre-tokenizer - applies multiple pre-tokenizers in order
 pub struct SequencePreTokenizer {
     pretokenizers: Vec<Box<dyn PreTokenizer>>,
@@ -793,5 +1113,95 @@ mod tests {
         assert_eq!(tokens[1].text, ",");
         assert_eq!(tokens[2].text, "world");
         assert_eq!(tokens[3].text, "!");
+    }
+
+    #[test]
+    fn test_char_delimiter_split() {
+        let pretokenizer = CharDelimiterSplit::new('|');
+
+        let tokens = pretokenizer.pre_tokenize("hello|world|foo");
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].text, "hello");
+        assert_eq!(tokens[1].text, "world");
+        assert_eq!(tokens[2].text, "foo");
+    }
+
+    #[test]
+    fn test_char_delimiter_split_consecutive() {
+        let pretokenizer = CharDelimiterSplit::new(',');
+
+        let tokens = pretokenizer.pre_tokenize("a,,b");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].text, "a");
+        assert_eq!(tokens[1].text, "b");
+    }
+
+    #[test]
+    fn test_unicode_scripts_basic() {
+        let pretokenizer = UnicodeScriptsPreTokenizer::new();
+
+        // Mixed Latin and CJK
+        let tokens = pretokenizer.pre_tokenize("hello世界");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].text, "hello");
+        assert_eq!(tokens[1].text, "世界");
+    }
+
+    #[test]
+    fn test_unicode_scripts_spaces_join() {
+        let pretokenizer = UnicodeScriptsPreTokenizer::new();
+
+        // Spaces should join with neighboring scripts
+        let tokens = pretokenizer.pre_tokenize("Apples are りんご 林檎");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].text, "Apples are ");
+        assert_eq!(tokens[1].text, "りんご 林檎");
+    }
+
+    #[test]
+    fn test_unicode_scripts_hiragana_katakana_grouped() {
+        let pretokenizer = UnicodeScriptsPreTokenizer::new();
+
+        // Hiragana and Katakana should be grouped with Han
+        let tokens = pretokenizer.pre_tokenize("どこで生れ。Yes");
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].text, "どこで生れ");
+        assert_eq!(tokens[1].text, "。"); // Punctuation is Common script
+        assert_eq!(tokens[2].text, "Yes");
+    }
+
+    #[test]
+    fn test_regex_split_whitespace() {
+        let pretokenizer = RegexSplitPreTokenizer::new(r"\s+", SplitBehavior::Removed).unwrap();
+
+        let tokens = pretokenizer.pre_tokenize("hello  world\tfoo");
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].text, "hello");
+        assert_eq!(tokens[1].text, "world");
+        assert_eq!(tokens[2].text, "foo");
+    }
+
+    #[test]
+    fn test_regex_split_invert() {
+        // Invert mode: extract matches
+        let pretokenizer = RegexSplitPreTokenizer::new(r"\w+", SplitBehavior::Removed)
+            .unwrap()
+            .with_invert(true);
+
+        let tokens = pretokenizer.pre_tokenize("hello, world!");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].text, "hello");
+        assert_eq!(tokens[1].text, "world");
+    }
+
+    #[test]
+    fn test_regex_split_isolated() {
+        let pretokenizer = RegexSplitPreTokenizer::new(r"\s+", SplitBehavior::Isolated).unwrap();
+
+        let tokens = pretokenizer.pre_tokenize("hello world");
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].text, "hello");
+        assert_eq!(tokens[1].text, " ");
+        assert_eq!(tokens[2].text, "world");
     }
 }

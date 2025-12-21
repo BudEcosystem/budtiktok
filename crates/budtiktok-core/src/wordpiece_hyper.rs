@@ -1719,6 +1719,120 @@ impl HyperWordPieceTokenizer {
         }
         result
     }
+
+    /// Convert encoding to Encoding struct
+    pub fn encode_to_encoding(&self, text: &str, add_special_tokens: bool) -> crate::encoding::Encoding {
+        let ids = if add_special_tokens {
+            self.encode_with_special(text)
+        } else {
+            self.encode_fast(text)
+        };
+
+        let mut encoding = crate::encoding::Encoding::with_capacity(ids.len());
+        for &id in &ids {
+            let token = self.vocabulary.id_to_token(id).unwrap_or("[UNK]").to_string();
+            let is_special = token.starts_with('[') && token.ends_with(']');
+            encoding.push(id, token, (0, 0), None, Some(0), is_special);
+        }
+        encoding
+    }
+}
+
+// Implement Tokenizer trait for HyperWordPieceTokenizer
+impl crate::tokenizer::Tokenizer for HyperWordPieceTokenizer {
+    fn vocabulary(&self) -> &Vocabulary {
+        &self.vocabulary
+    }
+
+    fn encode(&self, text: &str, add_special_tokens: bool) -> crate::error::Result<crate::encoding::Encoding> {
+        Ok(self.encode_to_encoding(text, add_special_tokens))
+    }
+
+    fn encode_pair(
+        &self,
+        text: &str,
+        text_pair: &str,
+        add_special_tokens: bool,
+    ) -> crate::error::Result<crate::encoding::Encoding> {
+        let mut encoding = self.encode_to_encoding(text, false);
+        let pair_encoding = self.encode_to_encoding(text_pair, false);
+
+        // Update sequence IDs for second sequence
+        let mut pair_with_seq_id = crate::encoding::Encoding::with_capacity(pair_encoding.len());
+        for i in 0..pair_encoding.len() {
+            pair_with_seq_id.push(
+                pair_encoding.get_ids()[i],
+                pair_encoding.get_tokens()[i].clone(),
+                pair_encoding.get_offsets()[i],
+                pair_encoding.get_word_ids()[i],
+                Some(1),
+                pair_encoding.get_special_tokens_mask()[i] == 1,
+            );
+        }
+
+        encoding.merge(pair_with_seq_id, true);
+
+        if add_special_tokens {
+            // Add [CLS] at start and [SEP] after each sequence
+            let mut with_special = crate::encoding::Encoding::with_capacity(encoding.len() + 3);
+
+            if let Some(cls_id) = self.cls_id {
+                with_special.push(cls_id, "[CLS]".to_string(), (0, 0), None, Some(0), true);
+            }
+
+            for i in 0..encoding.len() {
+                with_special.push(
+                    encoding.get_ids()[i],
+                    encoding.get_tokens()[i].clone(),
+                    encoding.get_offsets()[i],
+                    encoding.get_word_ids()[i],
+                    encoding.get_sequence_ids()[i],
+                    encoding.get_special_tokens_mask()[i] == 1,
+                );
+            }
+
+            if let Some(sep_id) = self.sep_id {
+                with_special.push(sep_id, "[SEP]".to_string(), (0, 0), None, Some(0), true);
+                with_special.push(sep_id, "[SEP]".to_string(), (0, 0), None, Some(1), true);
+            }
+
+            encoding = with_special;
+        }
+
+        Ok(encoding)
+    }
+
+    fn encode_batch(
+        &self,
+        texts: &[&str],
+        add_special_tokens: bool,
+    ) -> crate::error::Result<Vec<crate::encoding::Encoding>> {
+        use rayon::prelude::*;
+
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if texts.len() == 1 {
+            return Ok(vec![self.encode_to_encoding(texts[0], add_special_tokens)]);
+        }
+
+        Ok(texts
+            .par_iter()
+            .map(|text| self.encode_to_encoding(text, add_special_tokens))
+            .collect())
+    }
+
+    fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> crate::error::Result<String> {
+        Ok(HyperWordPieceTokenizer::decode(self, ids, skip_special_tokens))
+    }
+
+    fn save(&self, _path: &std::path::Path) -> crate::error::Result<()> {
+        Err(crate::error::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Saving not yet implemented for HyperWordPieceTokenizer",
+        )))
+    }
 }
 
 #[cfg(test)]

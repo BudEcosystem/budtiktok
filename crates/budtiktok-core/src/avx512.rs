@@ -7,15 +7,18 @@
 //! - 64 bytes per iteration (vs 32 for AVX2)
 //! - Native mask registers for comparisons
 //! - Efficient bit manipulation with mask operations
+//!
+//! Note: AVX-512 intrinsics require the `nightly` feature flag as they use
+//! unstable Rust features. On stable Rust, scalar fallbacks are used.
 
 /// Check if AVX-512 (F and BW) is available
 #[inline]
 pub fn is_avx512_available() -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "nightly"))]
     {
         is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw")
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", feature = "nightly")))]
     {
         false
     }
@@ -33,7 +36,7 @@ pub fn classify_whitespace(input: &[u8]) -> u64 {
         return 0;
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "nightly"))]
     {
         if is_avx512_available() && input.len() >= 64 {
             return unsafe { classify_whitespace_avx512(input) };
@@ -59,7 +62,7 @@ fn classify_whitespace_scalar(input: &[u8]) -> u64 {
 /// # Safety
 /// - Input must have at least 64 bytes
 /// - AVX-512F and AVX-512BW must be available (checked by caller)
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "nightly"))]
 #[target_feature(enable = "avx512f", enable = "avx512bw")]
 unsafe fn classify_whitespace_avx512(input: &[u8]) -> u64 {
     use std::arch::x86_64::*;
@@ -92,7 +95,7 @@ pub fn classify_alphanumeric(input: &[u8]) -> u64 {
         return 0;
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "nightly"))]
     {
         if is_avx512_available() && input.len() >= 64 {
             return unsafe { classify_alphanumeric_avx512(input) };
@@ -118,7 +121,7 @@ fn classify_alphanumeric_scalar(input: &[u8]) -> u64 {
 /// # Safety
 /// - Input must have at least 64 bytes
 /// - AVX-512F and AVX-512BW must be available (checked by caller)
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "nightly"))]
 #[target_feature(enable = "avx512f", enable = "avx512bw")]
 unsafe fn classify_alphanumeric_avx512(input: &[u8]) -> u64 {
     use std::arch::x86_64::*;
@@ -161,7 +164,7 @@ pub fn classify_punctuation(input: &[u8]) -> u64 {
         return 0;
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "nightly"))]
     {
         if is_avx512_available() && input.len() >= 64 {
             return unsafe { classify_punctuation_avx512(input) };
@@ -183,7 +186,7 @@ fn classify_punctuation_scalar(input: &[u8]) -> u64 {
 }
 
 /// AVX-512 punctuation classification
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "nightly"))]
 #[target_feature(enable = "avx512f", enable = "avx512bw")]
 unsafe fn classify_punctuation_avx512(input: &[u8]) -> u64 {
     use std::arch::x86_64::*;
@@ -229,7 +232,7 @@ pub fn classify_non_ascii(input: &[u8]) -> u64 {
         return 0;
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "nightly"))]
     {
         if is_avx512_available() && input.len() >= 64 {
             return unsafe { classify_non_ascii_avx512(input) };
@@ -251,7 +254,7 @@ fn classify_non_ascii_scalar(input: &[u8]) -> u64 {
 }
 
 /// AVX-512 non-ASCII classification
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "nightly"))]
 #[target_feature(enable = "avx512f", enable = "avx512bw")]
 unsafe fn classify_non_ascii_avx512(input: &[u8]) -> u64 {
     use std::arch::x86_64::*;
@@ -276,7 +279,7 @@ pub fn pretokenize(input: &[u8]) -> Vec<(usize, usize)> {
         return Vec::new();
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "nightly"))]
     {
         if is_avx512_available() && input.len() >= 64 {
             return unsafe { pretokenize_avx512(input) };
@@ -317,7 +320,7 @@ fn pretokenize_scalar(input: &[u8]) -> Vec<(usize, usize)> {
 }
 
 /// AVX-512 pre-tokenization
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "nightly"))]
 #[target_feature(enable = "avx512f", enable = "avx512bw")]
 unsafe fn pretokenize_avx512(input: &[u8]) -> Vec<(usize, usize)> {
     let mut tokens = Vec::new();
@@ -480,7 +483,7 @@ pub fn find_first_non_ascii(input: &[u8]) -> Option<usize> {
 
 /// Convert ASCII uppercase to lowercase using AVX-512
 pub fn to_lowercase_ascii(input: &mut [u8]) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "nightly"))]
     {
         if is_avx512_available() && input.len() >= 64 {
             unsafe { to_lowercase_ascii_avx512(input) };
@@ -501,7 +504,7 @@ fn to_lowercase_ascii_scalar(input: &mut [u8]) {
 }
 
 /// AVX-512 lowercase conversion
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "nightly"))]
 #[target_feature(enable = "avx512f", enable = "avx512bw")]
 unsafe fn to_lowercase_ascii_avx512(input: &mut [u8]) {
     use std::arch::x86_64::*;
@@ -533,7 +536,7 @@ unsafe fn to_lowercase_ascii_avx512(input: &mut [u8]) {
 
 /// Convert ASCII lowercase to uppercase using AVX-512
 pub fn to_uppercase_ascii(input: &mut [u8]) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "nightly"))]
     {
         if is_avx512_available() && input.len() >= 64 {
             unsafe { to_uppercase_ascii_avx512(input) };
@@ -554,7 +557,7 @@ fn to_uppercase_ascii_scalar(input: &mut [u8]) {
 }
 
 /// AVX-512 uppercase conversion
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "nightly"))]
 #[target_feature(enable = "avx512f", enable = "avx512bw")]
 unsafe fn to_uppercase_ascii_avx512(input: &mut [u8]) {
     use std::arch::x86_64::*;
