@@ -1,21 +1,31 @@
 # BudTikTok: High-Performance HF-Compatible Tokenization
 
-**BudTikTok** is a next-generation tokenization library designed to bridge the gap between high-performance systems and the HuggingFace ecosystem. It offers a **5-10x performance advantage** over standard HuggingFace tokenizers while maintaining full API and format compatibility.
+**BudTikTok** is a next-generation, production-ready tokenization library designed to bridge the gap between high-performance systems and the HuggingFace ecosystem. It offers a **5-10x performance advantage** over standard HuggingFace tokenizers while maintaining **95% API and format compatibility**.
 
 ## 🚀 Key Features
 
-- **Extreme Performance**: Built with Rust, utilizing SIMD (AVX-512), intelligent caching, and lazy evaluation to achieve state-of-the-art speeds.
-- **Full HuggingFace Compatibility**:
-    - Drop-in replacement for HF tokenizers.
-    - Uses standard `tokenizer.json` format.
-    - Compatible API surface for seamless integration.
-- **Hybrid Architecture**: unique `TokenizerPipeline` design that wraps ultra-fast core models (WordPiece, BPE, Unigram) with flexible, composable pipeline stages.
-- **Comprehensive Model Support**:
+### ⚡ Extreme Performance
+- **SIMD Acceleration**: Runtime-detected optimization for **AVX-512**, **AVX2**, **SSE4.2** (x86_64) and **NEON**, **SVE** (ARM64).
+- **Intelligent Caching**: Multi-level cache with CLOCK eviction and sharded access for high concurrency.
+- **Lazy Evaluation**: Zero-copy pipeline design that only computes what is necessary.
+
+### 🎮 GPU Acceleration
+- **CUDA Support**: Fully integrated GPU tokenization pipeline.
+- **Multi-GPU**: Automatic load balancing across available GPUs.
+- **Async Pipeline**: Overlapped CPU-GPU data transfer for maximum throughput.
+
+### 🔌 Full HuggingFace Compatibility
+- **Drop-in Replacement**: Compatible with standard `tokenizer.json` files.
+- **Model Support**:
     - **WordPiece** (BERT, DistilBERT, Electra)
-    - **BPE** (GPT-2, RoBERTa)
+    - **BPE** (GPT-2, RoBERTa, Llama-2)
     - **Unigram** (Albert, T5)
     - **WordLevel**
-- **Production Ready**: Thread-safe, robust error handling, and designed for high-concurrency environments.
+- **Gap Analysis**: See [BUDTIKTOK_HF_GAP_ANALYSIS.md](BUDTIKTOK_HF_GAP_ANALYSIS.md) for detailed compatibility report.
+
+### 🧠 LatentBud Integration
+- **Pre-tokenized Requests**: Native support for pre-tokenized inputs to bypass redundant processing.
+- **Token Budget Routing**: Intelligent routing based on token budgets for efficient batching.
 
 ## 📦 Installation
 
@@ -50,22 +60,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Dynamic Token Management
-
-BudTikTok supports dynamic vocabulary modification, fully compatible with HF's `AddedVocabulary`.
+### GPU Tokenization
 
 ```rust
-use budtiktok::{TokenizerPipeline, AddedToken};
+use budtiktok::{TokenizerPipeline, GpuConfig};
 
-let mut tokenizer = TokenizerPipeline::from_file("tokenizer.json")?;
+// Enable GPU with auto-detection
+let config = GpuConfig::auto();
+let tokenizer = TokenizerPipeline::from_file_with_gpu("tokenizer.json", config)?;
 
-// Add a special token
-tokenizer.add_special_tokens(&[
-    AddedToken::from("<custom_token>", true),
-]);
-
-// The new token is now recognized and handled correctly
-let encoding = tokenizer.encode("This has a <custom_token>.", true)?;
+// Tokenize on GPU (transparently handles batching)
+let encodings = tokenizer.encode_batch(&texts, true)?;
 ```
 
 ## 🏗️ Architecture
