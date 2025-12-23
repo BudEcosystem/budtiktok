@@ -10,6 +10,7 @@ members = [
     "crates/budtiktok-bench",
     "crates/budtiktok-accuracy",
     "crates/budtiktok-hf-compat",
+    "crates/budtiktok-python",
 ]
 
 [workspace.package]

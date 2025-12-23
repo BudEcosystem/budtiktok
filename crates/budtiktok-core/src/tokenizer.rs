@@ -5,6 +5,8 @@
 
 use std::path::Path;
 
+use rayon::prelude::*;
+
 use crate::encoding::Encoding;
 use crate::error::Result;
 use crate::vocab::Vocabulary;
@@ -88,14 +90,16 @@ pub trait Tokenizer: Send + Sync {
         add_special_tokens: bool,
     ) -> Result<Encoding>;
 
-    /// Encode a batch of texts
+    /// Encode a batch of texts (parallel by default)
+    ///
+    /// Uses Rayon's parallel iterator for maximum throughput on multi-core systems.
     fn encode_batch(
         &self,
         texts: &[&str],
         add_special_tokens: bool,
     ) -> Result<Vec<Encoding>> {
         texts
-            .iter()
+            .par_iter()
             .map(|t| self.encode(t, add_special_tokens))
             .collect()
     }
@@ -103,14 +107,16 @@ pub trait Tokenizer: Send + Sync {
     /// Decode token IDs back to text
     fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> Result<String>;
 
-    /// Decode a batch of token ID sequences
+    /// Decode a batch of token ID sequences (parallel by default)
+    ///
+    /// Uses Rayon's parallel iterator for maximum throughput on multi-core systems.
     fn decode_batch(
         &self,
         ids_batch: &[Vec<u32>],
         skip_special_tokens: bool,
     ) -> Result<Vec<String>> {
         ids_batch
-            .iter()
+            .par_iter()
             .map(|ids| self.decode(ids, skip_special_tokens))
             .collect()
     }

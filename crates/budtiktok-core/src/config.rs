@@ -466,6 +466,52 @@ impl VocabFormat {
     }
 }
 
+/// Merge rules format - supports both string format and array format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MergesFormat {
+    /// String format: ["a b", "c d", ...]
+    Strings(Vec<String>),
+    /// Array format: [["a", "b"], ["c", "d"], ...]
+    Arrays(Vec<(String, String)>),
+}
+
+impl Default for MergesFormat {
+    fn default() -> Self {
+        MergesFormat::Strings(Vec::new())
+    }
+}
+
+impl MergesFormat {
+    /// Convert to list of (first, second) pairs
+    pub fn to_pairs(&self) -> Vec<(String, String)> {
+        match self {
+            MergesFormat::Strings(strings) => {
+                strings
+                    .iter()
+                    .filter_map(|line| {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            Some((parts[0].to_string(), parts[1].to_string()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            MergesFormat::Arrays(arrays) => arrays.clone(),
+        }
+    }
+
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        match self {
+            MergesFormat::Strings(s) => s.is_empty(),
+            MergesFormat::Arrays(a) => a.is_empty(),
+        }
+    }
+}
+
 /// Model configuration (core tokenization algorithm)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
@@ -494,9 +540,9 @@ pub struct ModelConfig {
     #[serde(default)]
     pub vocab: VocabFormat,
 
-    /// Merge rules (for BPE): list of (first, second) pairs
+    /// Merge rules (for BPE): supports both string format ("a b") and array format (["a", "b"])
     #[serde(default)]
-    pub merges: Option<Vec<String>>,
+    pub merges: Option<MergesFormat>,
 
     /// End of word suffix (for some BPE models)
     #[serde(default)]
@@ -533,23 +579,11 @@ impl ModelConfig {
         self.model_type == "Unigram" || self.vocab.is_unigram_format()
     }
 
-    /// Parse BPE merge rules from string format "first second"
+    /// Parse BPE merge rules - supports both string and array formats
     pub fn parse_merges(&self) -> Vec<(String, String)> {
         self.merges
             .as_ref()
-            .map(|merges| {
-                merges
-                    .iter()
-                    .filter_map(|line| {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 {
-                            Some((parts[0].to_string(), parts[1].to_string()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
+            .map(|merges| merges.to_pairs())
             .unwrap_or_default()
     }
 }

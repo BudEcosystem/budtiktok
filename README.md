@@ -6,6 +6,7 @@
 
 ### ⚡ Extreme Performance
 - **SIMD Acceleration**: Runtime-detected optimization for **AVX-512**, **AVX2**, **SSE4.2** (x86_64) and **NEON**, **SVE** (ARM64).
+- **Parallel Execution**: Native **Rayon** integration for multi-threaded batch encoding and decoding.
 - **Intelligent Caching**: Multi-level cache with CLOCK eviction and sharded access for high concurrency.
 - **Lazy Evaluation**: Zero-copy pipeline design that only computes what is necessary.
 
@@ -16,6 +17,7 @@
 
 ### 🔌 Full HuggingFace Compatibility
 - **Drop-in Replacement**: Compatible with standard `tokenizer.json` files.
+- **Post-Processing**: Native support for **BERT**, **RoBERTa**, and **Template** post-processors.
 - **Model Support**:
     - **WordPiece** (BERT, DistilBERT, Electra)
     - **BPE** (GPT-2, RoBERTa, Llama-2)

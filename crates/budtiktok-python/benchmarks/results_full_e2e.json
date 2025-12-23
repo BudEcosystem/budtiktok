@@ -1,0 +1,124 @@
+{
+  "tokenization": [
+    {
+      "budtiktok": {
+        "name": "BudTikTok",
+        "batch_size": 1,
+        "num_texts": 1000,
+        "total_tokens": 60905,
+        "time_seconds": 0.011428647395223378,
+        "tokens_per_second": 5329152.076688913,
+        "texts_per_second": 87499.41838418705,
+        "time_per_text_us": 11.42864739522338
+      },
+      "huggingface": {
+        "name": "HuggingFace",
+        "batch_size": 1,
+        "num_texts": 1000,
+        "total_tokens": 60905,
+        "time_seconds": 0.16419716640375553,
+        "tokens_per_second": 370926.01129447366,
+        "texts_per_second": 6090.239082086425,
+        "time_per_text_us": 164.19716640375555
+      }
+    },
+    {
+      "budtiktok": {
+        "name": "BudTikTok",
+        "batch_size": 32,
+        "num_texts": 1000,
+        "total_tokens": 60905,
+        "time_seconds": 0.020063171605579556,
+        "tokens_per_second": 3035661.619076336,
+        "texts_per_second": 49842.56824688179,
+        "time_per_text_us": 20.063171605579555
+      },
+      "huggingface": {
+        "name": "HuggingFace",
+        "batch_size": 32,
+        "num_texts": 1000,
+        "total_tokens": 60905,
+        "time_seconds": 0.02879161441233009,
+        "tokens_per_second": 2115372.869605994,
+        "texts_per_second": 34732.33510559057,
+        "time_per_text_us": 28.79161441233009
+      }
+    }
+  ],
+  "accuracy": {
+    "total_checked": 1000,
+    "mismatches": 0,
+    "match_rate": 1.0,
+    "total_tokens_budtiktok": 60905,
+    "total_tokens_huggingface": 60905,
+    "sample_mismatches": []
+  },
+  "queue_formation": {
+    "BudTikTok": {
+      "method": "BudTikTok",
+      "num_texts": 1000,
+      "length_estimation_time_ms": 6.7451799986884,
+      "queue_formation_time_ms": 0.5714889848604798,
+      "total_time_ms": 7.31666898354888,
+      "num_batches": 16,
+      "avg_batch_size": 62.5,
+      "total_tokens": 60905,
+      "avg_tokens_per_text": 60.905
+    },
+    "HuggingFace": {
+      "method": "HuggingFace",
+      "num_texts": 1000,
+      "length_estimation_time_ms": 23.03034800570458,
+      "queue_formation_time_ms": 0.5839790683239698,
+      "total_time_ms": 23.61432707402855,
+      "num_batches": 16,
+      "avg_batch_size": 62.5,
+      "total_tokens": 60905,
+      "avg_tokens_per_text": 60.905
+    }
+  },
+  "throughput": [
+    {
+      "budtiktok": {
+        "name": "BudTikTok",
+        "concurrent_requests": 1,
+        "batch_size": 32,
+        "total_requests": 32,
+        "total_embeddings": 1000,
+        "time_seconds": 1.9090617150068283,
+        "requests_per_second": 16.76216109120681,
+        "embeddings_per_second": 523.8175341002128,
+        "latency": {
+          "p50_ms": 58.09319601394236,
+          "p95_ms": 96.77709394600242,
+          "p99_ms": 98.03827397990972,
+          "mean_ms": 59.65567046951037,
+          "min_ms": 20.190884009934962,
+          "max_ms": 98.03827397990972
+        }
+      },
+      "huggingface": null
+    },
+    {
+      "budtiktok": {
+        "name": "BudTikTok",
+        "concurrent_requests": 4,
+        "batch_size": 32,
+        "total_requests": 32,
+        "total_embeddings": 1000,
+        "time_seconds": 0.9216732259374112,
+        "requests_per_second": 34.71946357935437,
+        "embeddings_per_second": 1084.983236854824,
+        "latency": {
+          "p50_ms": 106.0107349185273,
+          "p95_ms": 213.7610709760338,
+          "p99_ms": 214.44941102527082,
+          "mean_ms": 114.09378718599328,
+          "min_ms": 48.96207293495536,
+          "max_ms": 214.44941102527082
+        }
+      },
+      "huggingface": null
+    }
+  ]
+}

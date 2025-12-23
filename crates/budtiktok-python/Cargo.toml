@@ -1,0 +1,31 @@
+[package]
+name = "budtiktok-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python bindings for BudTikTok - Ultra-fast HuggingFace-compatible tokenizer"
+
+[lib]
+name = "budtiktok"
+crate-type = ["cdylib"]
+
+[features]
+default = []
+# Build with extension-module for standalone Python wheel
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+budtiktok-core = { path = "../budtiktok-core" }
+budtiktok-hf-compat = { path = "../budtiktok-hf-compat" }
+
+# PyO3 for Python bindings
+pyo3 = { version = "0.21", features = ["abi3-py38"] }
+
+# For numpy array support
+numpy = "0.21"
+
+# Rayon for parallel batch processing
+rayon = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }

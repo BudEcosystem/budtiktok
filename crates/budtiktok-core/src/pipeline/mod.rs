@@ -140,14 +140,120 @@ impl TokenizerPipeline {
 
     /// Load a tokenizer pipeline from a JSON file
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let tokenizer = crate::loader::load_tokenizer(path)?;
-        Ok(Self::new(tokenizer))
+        let json = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| Error::VocabLoad(format!("Failed to read tokenizer file: {}", e)))?;
+        Self::from_str(&json)
     }
 
     /// Load a tokenizer pipeline from a JSON string
     pub fn from_str(json: &str) -> Result<Self> {
+        use crate::config::TokenizerConfig;
+        use crate::postprocessor::{RobertaPostProcessor, BertPostProcessor, SpecialToken};
+
+        // Parse the full config to extract all components
+        let config = TokenizerConfig::from_json(json)?;
+
+        // Load the tokenizer
         let tokenizer = crate::loader::load_tokenizer_from_str(json)?;
-        Ok(Self::new(tokenizer))
+        let mut pipeline = Self::new(tokenizer);
+
+        // Set post-processor if configured
+        if let Some(ref pp_config) = config.post_processor {
+            match pp_config.processor_type.as_str() {
+                "RobertaProcessing" => {
+                    // RoBERTa-style: <s> content </s>
+                    // Used by MPNet, RoBERTa, ALBERT, etc.
+                    let cls_info = pp_config.cls.as_ref();
+                    let sep_info = pp_config.sep.as_ref();
+
+                    let (cls_token, cls_id) = cls_info
+                        .map(|(t, id)| (t.as_str(), *id))
+                        .unwrap_or(("<s>", 0));
+                    let (sep_token, sep_id) = sep_info
+                        .map(|(t, id)| (t.as_str(), *id))
+                        .unwrap_or(("</s>", 2));
+
+                    let cls = SpecialToken::new(cls_token, cls_id);
+                    let sep = SpecialToken::new(sep_token, sep_id);
+                    let processor = RobertaPostProcessor::new(cls, sep);
+                    pipeline.with_post_processor(processor);
+                }
+                "BertProcessing" => {
+                    // BERT-style: [CLS] content [SEP]
+                    let cls_info = pp_config.cls.as_ref();
+                    let sep_info = pp_config.sep.as_ref();
+
+                    let (cls_token, cls_id) = cls_info
+                        .map(|(t, id)| (t.as_str(), *id))
+                        .unwrap_or(("[CLS]", 101));
+                    let (sep_token, sep_id) = sep_info
+                        .map(|(t, id)| (t.as_str(), *id))
+                        .unwrap_or(("[SEP]", 102));
+
+                    let cls = SpecialToken::new(cls_token, cls_id);
+                    let sep = SpecialToken::new(sep_token, sep_id);
+                    let processor = BertPostProcessor::new(cls, sep);
+                    pipeline.with_post_processor(processor);
+                }
+                "TemplateProcessing" => {
+                    // Template-based post-processing
+                    // Parse the template to determine the correct special tokens
+                    if let Some(ref single) = pp_config.single {
+                        // Check if template contains [CLS] or <s>
+                        let uses_roberta = single.iter().any(|item| {
+                            if let crate::config::TemplateItem::SpecialToken { special_token } = item {
+                                special_token.id == "<s>"
+                            } else {
+                                false
+                            }
+                        });
+                        let uses_bert = single.iter().any(|item| {
+                            if let crate::config::TemplateItem::SpecialToken { special_token } = item {
+                                special_token.id.contains("CLS")
+                            } else {
+                                false
+                            }
+                        });
+
+                        if uses_roberta {
+                            // RoBERTa-style: <s> content </s>
+                            if let Some(ref special_tokens) = pp_config.special_tokens {
+                                let cls_id = special_tokens.get("<s>")
+                                    .and_then(|st| st.ids.first().copied())
+                                    .unwrap_or(0);
+                                let sep_id = special_tokens.get("</s>")
+                                    .and_then(|st| st.ids.first().copied())
+                                    .unwrap_or(2);
+
+                                let cls = SpecialToken::new("<s>", cls_id);
+                                let sep = SpecialToken::new("</s>", sep_id);
+                                let processor = RobertaPostProcessor::new(cls, sep);
+                                pipeline.with_post_processor(processor);
+                            }
+                        } else if uses_bert {
+                            // BERT-style: [CLS] content [SEP]
+                            if let Some(ref special_tokens) = pp_config.special_tokens {
+                                let cls_id = special_tokens.get("[CLS]")
+                                    .and_then(|st| st.ids.first().copied())
+                                    .unwrap_or(101);
+                                let sep_id = special_tokens.get("[SEP]")
+                                    .and_then(|st| st.ids.first().copied())
+                                    .unwrap_or(102);
+
+                                let processor = BertPostProcessor::with_ids(cls_id, sep_id);
+                                pipeline.with_post_processor(processor);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Unknown processor type - skip silently
+                    // This allows graceful degradation for unsupported processor types
+                }
+            }
+        }
+
+        Ok(pipeline)
     }
 
     // ========================================================================
@@ -230,7 +336,17 @@ impl TokenizerPipeline {
             Ok(encoding)
         } else {
             // No added tokens - use inner tokenizer directly
-            let mut encoding = self.inner.encode(text, add_special_tokens)?;
+            // Pass add_special_tokens=false to inner tokenizer if we have a post-processor
+            let has_post_processor = self.post_processor.is_some();
+            let inner_add_special = add_special_tokens && !has_post_processor;
+            let mut encoding = self.inner.encode(text, inner_add_special)?;
+
+            // Apply post-processor if present
+            if add_special_tokens {
+                if let Some(ref pp) = self.post_processor {
+                    encoding = pp.process(encoding, add_special_tokens);
+                }
+            }
 
             // Apply truncation
             if let Some(ref trunc) = self.truncation {
@@ -285,10 +401,12 @@ impl TokenizerPipeline {
 
         let mut encodings: Vec<Encoding> = if added_vocab.is_empty() {
             // No added tokens - use parallel inner encoding
+            // If we have a post-processor, don't let inner tokenizer add special tokens
+            let inner_add_special = add_special_tokens && !has_post_processor;
             inputs
                 .par_iter()
                 .map(|&text| {
-                    let mut encoding = self.inner.encode(text, add_special_tokens)?;
+                    let mut encoding = self.inner.encode(text, inner_add_special)?;
 
                     // Apply post-processing if needed
                     if add_special_tokens {
