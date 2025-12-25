@@ -8,7 +8,9 @@ use std::time::Instant;
 
 use budtiktok_core::unigram::UnigramPiece;
 use budtiktok_core::unigram_fast::{UnigramFast, UnigramFastConfig};
+use budtiktok_core::vocab::{Vocabulary, SpecialTokens};
 use serde::Deserialize;
+use ahash::AHashMap;
 
 const DATASET_PATH: &str = "/home/bud/Desktop/latentbud/budtiktok/benchmark_data/openwebtext_1gb.jsonl";
 const XLNET_PATH: &str = "/home/bud/Desktop/latentbud/budtiktok/benchmark_data/xlnet/tokenizer.json";
@@ -48,9 +50,18 @@ fn main() {
         ..Default::default()
     };
 
+    let mut vocab_map = AHashMap::with_capacity(vocab.len());
+    for (i, token) in vocab.iter().enumerate() {
+        vocab_map.insert(token.clone(), i as u32);
+    }
+    let vocabulary = Vocabulary::new(vocab_map, SpecialTokens {
+        unk_token: model.get("unk_token").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        ..Default::default()
+    });
+
     // Create tokenizers - one with cache, one without
-    let tok_no_cache = UnigramFast::new(vocab.clone(), pieces.clone(), config.clone());
-    let tok_with_cache = UnigramFast::with_cache(vocab, pieces, config, 100_000);
+    let tok_no_cache = UnigramFast::new(vocabulary.clone(), pieces.clone(), config.clone());
+    let tok_with_cache = UnigramFast::with_cache(vocabulary, pieces, config, 100_000);
 
     println!("Tokenizer loaded. Cache enabled: {} entries capacity\n", 100_000);
 

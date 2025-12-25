@@ -2,7 +2,9 @@
 
 use budtiktok_core::unigram::UnigramPiece;
 use budtiktok_core::unigram_fast::{UnigramFast, UnigramFastConfig, normalize_for_hf, preprocess_text};
+use budtiktok_core::vocab::{Vocabulary, SpecialTokens};
 use tokenizers::Tokenizer as HfTokenizer;
+use ahash::AHashMap;
 
 const XLNET_PATH: &str = "/home/bud/Desktop/latentbud/budtiktok/benchmark_data/xlnet/tokenizer.json";
 
@@ -34,7 +36,16 @@ fn main() {
         ..Default::default()
     };
 
-    let bt_tok = UnigramFast::new(vocab.clone(), pieces, config);
+    let mut vocab_map = AHashMap::with_capacity(vocab.len());
+    for (i, token) in vocab.iter().enumerate() {
+        vocab_map.insert(token.clone(), i as u32);
+    }
+    let vocabulary = Vocabulary::new(vocab_map, SpecialTokens {
+        unk_token: model.get("unk_token").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        ..Default::default()
+    });
+
+    let bt_tok = UnigramFast::new(vocabulary, pieces, config);
 
     // Test cases that were mismatching
     let test_cases: [&str; 7] = [

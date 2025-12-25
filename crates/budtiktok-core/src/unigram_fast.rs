@@ -9,6 +9,7 @@
 //!
 //! Target: 10x faster than HuggingFace Tokenizers
 
+use serde::{Deserialize, Serialize};
 use ahash::AHashMap;
 use bumpalo::Bump;
 use rayon::prelude::*;
@@ -20,7 +21,7 @@ use crate::encoding::Encoding;
 use crate::error::{Error, Result};
 use crate::tokenizer::Tokenizer;
 use crate::unigram::{UnigramConfig, UnigramPiece, SPIECE_UNDERLINE};
-use crate::vocab::Vocabulary;
+use crate::vocab::{Vocabulary, SpecialTokens};
 
 /// Type alias for the token cache used by UnigramFast
 pub type UnigramTokenCache = ShardedCache<String, Vec<u32>>;
@@ -30,7 +31,7 @@ pub type UnigramTokenCache = ShardedCache<String, Vec<u32>>;
 // ============================================================================
 
 /// Optimized Unigram tokenizer configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnigramFastConfig {
     /// Unknown token string
     pub unk_token: String,
@@ -954,7 +955,7 @@ pub struct UnigramFast {
     /// Dense score array indexed by token ID
     scores: Vec<f64>,
     /// Vocabulary for ID-to-token mapping
-    vocab: Vec<String>,
+    vocabulary: Vocabulary,
     /// Configuration
     config: UnigramFastConfig,
     /// Minimum score (for unknown token penalty)
@@ -970,27 +971,31 @@ pub struct UnigramFast {
 impl UnigramFast {
     /// Create a new fast Unigram tokenizer
     pub fn new(
-        vocab: Vec<String>,
+        vocabulary: Vocabulary,
         pieces: Vec<UnigramPiece>,
         config: UnigramFastConfig,
     ) -> Self {
-        let vocab_size = vocab.len();
+        let vocab_size = vocabulary.len();
 
         // Build token-to-id map, keeping track of which ID has the best score
         // for each token string (handles duplicate entries in vocabulary)
         // Note: pieces[id].score gives the score for vocab[id]
         let mut token_to_best_id: AHashMap<&str, (u32, f64)> = AHashMap::new();
 
-        // Iterate through vocab with index, using pieces[index].score for score
-        for (id, token) in vocab.iter().enumerate() {
-            let score = if id < pieces.len() {
-                pieces[id].score
-            } else {
-                f64::NEG_INFINITY
-            };
+        // Pre-calculate scores for direct lookup by ID
+        let mut scores_by_id = vec![f64::NEG_INFINITY; vocab_size];
+        for piece in &pieces {
+            if let Some(id) = vocabulary.token_to_id(piece.token.as_str()) {
+                scores_by_id[id as usize] = piece.score;
+            }
+        }
+
+        // Iterate through vocabulary to find the best ID for each token string
+        for (token_str, id) in vocabulary.iter() {
+            let score = scores_by_id[id as usize];
 
             token_to_best_id
-                .entry(token.as_str())
+                .entry(token_str)
                 .and_modify(|(best_id, best_score)| {
                     // Keep the ID with the higher (better) score
                     if score > *best_score {
@@ -1039,7 +1044,7 @@ impl UnigramFast {
         Self {
             trie,
             scores,
-            vocab,
+            vocabulary,
             config,
             min_score,
             vocab_size,
@@ -1059,12 +1064,12 @@ impl UnigramFast {
     /// * `config` - Tokenizer configuration
     /// * `cache_capacity` - Total cache capacity (distributed across shards)
     pub fn with_cache(
-        vocab: Vec<String>,
+        vocabulary: Vocabulary,
         pieces: Vec<UnigramPiece>,
         config: UnigramFastConfig,
         cache_capacity: usize,
     ) -> Self {
-        let mut tokenizer = Self::new(vocab, pieces, config);
+        let mut tokenizer = Self::new(vocabulary, pieces, config);
         tokenizer.cache = Some(Arc::new(ShardedCache::new(cache_capacity)));
         tokenizer
     }
@@ -1128,7 +1133,12 @@ impl UnigramFast {
 
         let vocab_strings: Vec<String> = vocab.into_iter().map(|(t, _)| t).collect();
 
-        Self::new(vocab_strings, pieces, config.into())
+        let mut vocab_map = AHashMap::new();
+        for (i, token) in vocab_strings.iter().enumerate() {
+            vocab_map.insert(token.clone(), i as u32);
+        }
+        let vocabulary = Vocabulary::new(vocab_map, SpecialTokens::default());
+        Self::new(vocabulary, pieces, config.into())
     }
 
     /// Get score for token ID (direct array access)
@@ -1144,7 +1154,7 @@ impl UnigramFast {
     /// Get token string for ID
     #[inline]
     pub fn id_to_token(&self, id: u32) -> Option<&str> {
-        self.vocab.get(id as usize).map(|s| s.as_str())
+        self.vocabulary.id_to_token(id as u32)
     }
 
     /// Get ID for token string
@@ -2192,7 +2202,7 @@ impl UnigramFast {
 
 impl Tokenizer for UnigramFast {
     fn vocabulary(&self) -> &Vocabulary {
-        unimplemented!("UnigramFast uses internal vocab structure")
+        &self.vocabulary
     }
 
     fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Encoding> {
@@ -2220,8 +2230,121 @@ impl Tokenizer for UnigramFast {
         Ok(UnigramFast::decode(self, ids, skip_special_tokens))
     }
 
-    fn save(&self, _path: &std::path::Path) -> Result<()> {
-        Err(Error::invalid_config("Saving not yet implemented for UnigramFast"))
+    fn save(&self, path: &std::path::Path) -> Result<()> {
+        use crate::config::{TokenizerConfig, ModelConfig, VocabFormat, AddedToken};
+
+        let mut added_tokens = Vec::new();
+        if let Some(id) = self.vocabulary().token_to_id(&self.config.unk_token) {
+            added_tokens.push(AddedToken { id, content: self.config.unk_token.clone(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+        }
+        if let Some(ref bos) = self.config.bos_token {
+            if let Some(id) = self.vocabulary().token_to_id(bos) {
+                added_tokens.push(AddedToken { id, content: bos.clone(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+            }
+        }
+        if let Some(ref eos) = self.config.eos_token {
+            if let Some(id) = self.vocabulary().token_to_id(eos) {
+                added_tokens.push(AddedToken { id, content: eos.clone(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+            }
+        }
+
+        let config = TokenizerConfig {
+            version: "1.0".to_string(),
+            truncation: None,
+            padding: None,
+            added_tokens,
+            normalizer: None,
+            pre_tokenizer: Some(crate::config::PreTokenizerConfig {
+                pretokenizer_type: "Metaspace".to_string(),
+                add_prefix_space: Some(self.config.add_prefix_space),
+                replacement: Some(self.config.replacement_char),
+                use_regex: None,
+                pretokenizers: None,
+                pattern: None,
+                behavior: None,
+                invert: None,
+            }),
+            post_processor: None,
+            decoder: Some(crate::config::DecoderConfig {
+                decoder_type: "Metaspace".to_string(),
+                prefix: None,
+                cleanup: Some(true),
+                replacement: Some(self.config.replacement_char),
+                add_prefix_space: Some(self.config.add_prefix_space),
+                decoders: None,
+            }),
+            model: ModelConfig {
+                model_type: "Unigram".to_string(),
+                unk_token: Some(self.config.unk_token.clone()),
+                unk_id: Some(self.config.unk_id),
+                continuing_subword_prefix: None,
+                max_input_chars_per_word: None,
+                vocab: {
+                    let unigram_vocab: Vec<(String, f64)> = (0..self.vocab_size)
+                        .map(|id| {
+                            let token = self.vocabulary.id_to_token(id as u32).unwrap_or("");
+                            (token.to_string(), self.scores[id])
+                        })
+                        .collect();
+                    VocabFormat::List(unigram_vocab)
+                },
+                merges: None,
+                end_of_word_suffix: None,
+                fuse_unk: Some(self.config.fuse_unk),
+                byte_fallback: Some(self.config.byte_fallback),
+                dropout: None,
+            },
+        };
+
+        config.save(path, true)
+    }
+}
+
+impl UnigramFast {
+    /// Load a tokenizer from a JSON file
+    pub fn from_pretrained(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        use crate::config::TokenizerConfig;
+        let config = TokenizerConfig::from_file(path)?;
+        Self::from_config(config)
+    }
+
+    /// Create a tokenizer from a TokenizerConfig
+    pub fn from_config(config: crate::config::TokenizerConfig) -> Result<Self> {
+        if !config.is_unigram() {
+            return Err(Error::invalid_config("Not a Unigram tokenizer config"));
+        }
+
+        let vocab = Vocabulary::new(
+            config.model.get_vocab(),
+            crate::vocab::SpecialTokens {
+                unk_token: config.model.unk_token.clone(),
+                pad_token: config.get_special_token("pad").map(|t| t.content.clone()),
+                cls_token: config.get_special_token("cls").map(|t| t.content.clone()),
+                sep_token: config.get_special_token("sep").map(|t| t.content.clone()),
+                mask_token: config.get_special_token("mask").map(|t| t.content.clone()),
+                bos_token: config.get_special_token("bos").map(|t| t.content.clone()),
+                eos_token: config.get_special_token("eos").map(|t| t.content.clone()),
+            },
+        );
+
+        let pieces_raw = config.model.get_unigram_pieces().ok_or_else(|| {
+            Error::invalid_config("Unigram config missing vocabulary pieces")
+        })?;
+
+        let pieces: Vec<crate::unigram::UnigramPiece> = pieces_raw.into_iter().map(|(token, score)| crate::unigram::UnigramPiece { token, score }).collect();
+
+        let unigram_config = UnigramFastConfig {
+            unk_token: config.model.unk_token.clone().unwrap_or_else(|| "<unk>".to_string()),
+            unk_id: config.model.unk_id.unwrap_or(0),
+            bos_token: config.get_special_token("bos").map(|t| t.content.clone()),
+            eos_token: config.get_special_token("eos").map(|t| t.content.clone()),
+            byte_fallback: config.model.byte_fallback.unwrap_or(false),
+            add_prefix_space: config.pre_tokenizer.as_ref().and_then(|p| p.add_prefix_space).unwrap_or(true),
+            replacement_char: config.pre_tokenizer.as_ref().and_then(|p| p.replacement).unwrap_or(crate::unigram::SPIECE_UNDERLINE),
+            fuse_unk: config.model.fuse_unk.unwrap_or(true),
+        };
+
+        Ok(Self::new(vocab, pieces, unigram_config))
     }
 }
 
@@ -2234,7 +2357,7 @@ mod tests {
     use super::*;
 
     fn create_test_tokenizer() -> UnigramFast {
-        let vocab = vec![
+        let vocab_list = vec![
             "<unk>".to_string(),
             "▁hello".to_string(),
             "▁world".to_string(),
@@ -2253,6 +2376,19 @@ mod tests {
             ",".to_string(),
             "!".to_string(),
         ];
+
+        let mut vocab_map = AHashMap::new();
+        for (i, token) in vocab_list.iter().enumerate() {
+            vocab_map.insert(token.clone(), i as u32);
+        }
+
+        let vocab = Vocabulary::new(
+            vocab_map,
+            crate::vocab::SpecialTokens {
+                unk_token: Some("<unk>".to_string()),
+                ..Default::default()
+            },
+        );
 
         let pieces = vec![
             UnigramPiece { token: "<unk>".to_string(), score: -100.0 },

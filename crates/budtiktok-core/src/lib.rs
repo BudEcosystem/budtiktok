@@ -91,6 +91,7 @@ pub use loader::{load_tokenizer, load_tokenizer_from_str};
 pub use trie::{Trie, TrieBuilder, trie_from_vocab, CacheObliviousTrie, CacheObliviousTrieStats};
 pub use double_array_trie::{DoubleArrayTrie, DoubleArrayTrieBuilder, DoubleArrayTrieStats, TrieLookup};
 pub use arena::{Arena, ArenaVec, ArenaPool, TokenBuffer, TokenBufferPool};
+pub use vocab::{Vocabulary, SpecialTokens};
 
 // Re-exports: Text processing
 pub use normalizer::{

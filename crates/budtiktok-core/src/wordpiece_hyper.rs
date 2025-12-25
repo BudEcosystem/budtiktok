@@ -19,6 +19,7 @@
 //! - Google LinMaxMatch: O(n) greedy longest-match algorithm
 //! - Swiss Tables: SIMD parallel probing in hash buckets
 
+use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
 
 use crate::vocab::Vocabulary;
@@ -60,6 +61,7 @@ fn prefetch_read<T>(ptr: *const T) {
 /// Layout: 8 hashes (64B) + 8 ids (32B) + 8 lengths (8B) + padding = 128 bytes
 /// This allows 8-way parallel SIMD comparison
 #[repr(C, align(64))]
+#[derive(Clone, Copy)]
 struct HashBucket {
     /// Hash values for collision detection (8 × 8 bytes = 64 bytes)
     hashes: [u64; 8],
@@ -115,7 +117,7 @@ fn fast_hash(bytes: &[u8]) -> u64 {
 }
 
 /// Hyper-optimized tokenizer configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HyperConfig {
     pub continuing_subword_prefix: String,
     pub max_input_chars_per_word: usize,
@@ -183,50 +185,49 @@ impl HyperWordPieceTokenizer {
         let table_size = 1usize << config.hash_table_bits;
         let hash_mask = (table_size - 1) as u64;
 
-        // Continuation table is smaller (14-bit = 16K buckets) to reduce cache pressure
-        // Most vocabularies have fewer continuation tokens than root tokens
-        let cont_bits = config.hash_table_bits.saturating_sub(2).max(12);
-        let cont_size = 1usize << cont_bits;
-        let continuation_mask = (cont_size - 1) as u64;
-
-        // Initialize single-byte lookup table (fastest path for punctuation)
         let mut single_byte_lookup = Box::new(SingleByteLookup::new());
+        let hash_table_size = 1 << config.hash_table_bits;
+        let mut hash_table = vec![HashBucket::new(); hash_table_size];
 
-        let mut hash_table: Vec<HashBucket> = (0..table_size)
-            .map(|_| HashBucket::new())
-            .collect();
+        // Continuation table is smaller (1/4 size)
+        let continuation_bits = config.hash_table_bits.saturating_sub(2).max(10);
+        let continuation_size = 1 << continuation_bits;
+        let mut continuation_hash_table = vec![HashBucket::new(); continuation_size];
 
-        let mut continuation_hash_table: Vec<HashBucket> = (0..cont_size)
-            .map(|_| HashBucket::new())
-            .collect();
+        let hash_mask = (hash_table_size - 1) as u64;
+        let continuation_mask = (continuation_size - 1) as u64;
 
-        let prefix = &config.continuing_subword_prefix;
+        let prefix_bytes = config.continuing_subword_prefix.as_bytes().to_vec();
 
-        // Collect and sort vocabulary for deterministic insertion order
-        // This ensures consistent hash table behavior across runs
-        let mut sorted_vocab: Vec<(&str, u32)> = vocabulary.iter().collect();
-        sorted_vocab.sort_by_key(|(token, _)| *token);
+        // Populate hash tables from vocabulary
+        for (token, &id) in vocabulary.token_to_id_map() {
+            if token.is_empty() {
+                continue;
+            }
 
-        // Build all lookup tables with linear probing for overflow
-        for (token, id) in sorted_vocab {
-            if token.starts_with(prefix) {
-                // Continuation token: strip prefix and insert into continuation table
-                let suffix = &token[prefix.len()..];
-                let h = fast_hash(suffix.as_bytes());
-                let initial_bucket = (h & continuation_mask) as usize;
+            let bytes = token.as_bytes();
 
-                // Linear probe up to 16 buckets to find an empty slot
+            // Single byte optimization
+            if bytes.len() == 1 {
+                single_byte_lookup.set(bytes[0], id);
+            }
+
+            // Check if it's a continuation token
+            if bytes.starts_with(&prefix_bytes) && bytes.len() > prefix_bytes.len() {
+                let sub_bytes = &bytes[prefix_bytes.len()..];
+                let h = fast_hash(sub_bytes);
+                let bucket_idx = (h & continuation_mask) as usize;
+
+                // Try to insert into continuation table
                 let mut inserted = false;
-                for probe in 0..16 {
-                    let bucket_idx = (initial_bucket + probe) % cont_size;
-                    let bucket = &mut continuation_hash_table[bucket_idx];
-
-                    // Find empty slot in bucket
-                    for i in 0..8 {
-                        if bucket.ids[i] == 0 {
-                            bucket.hashes[i] = h;
-                            bucket.ids[i] = id + 1; // +1 because 0 = empty
-                            bucket.lengths[i] = suffix.len() as u8;
+                for i in 0..16 {
+                    let idx = (bucket_idx + i) & (continuation_mask as usize);
+                    let bucket = &mut continuation_hash_table[idx];
+                    for slot in 0..8 {
+                        if bucket.ids[slot] == 0 {
+                            bucket.hashes[slot] = h;
+                            bucket.ids[slot] = id + 1;
+                            bucket.lengths[slot] = sub_bytes.len() as u8;
                             inserted = true;
                             break;
                         }
@@ -236,44 +237,36 @@ impl HyperWordPieceTokenizer {
                     }
                 }
             } else {
-                let token_bytes = token.as_bytes();
+                // Main table
+                let h = fast_hash(bytes);
+                let bucket_idx = (h & hash_mask) as usize;
 
-                // Single-byte token: add to dedicated O(1) lookup
-                if token_bytes.len() == 1 {
-                    single_byte_lookup.set(token_bytes[0], id);
-                }
-
-                // Always add to hash table with linear probing for overflow
-                let h = fast_hash(token_bytes);
-                let initial_bucket = (h & hash_mask) as usize;
-
-                // Linear probe up to 16 buckets to find an empty slot
-                for probe in 0..16 {
-                    let bucket_idx = (initial_bucket + probe) % table_size;
-                    let bucket = &mut hash_table[bucket_idx];
-
-                    // Find empty slot in bucket
-                    let mut found_slot = false;
-                    for i in 0..8 {
-                        if bucket.ids[i] == 0 {
-                            bucket.hashes[i] = h;
-                            bucket.ids[i] = id + 1; // +1 because 0 = empty
-                            bucket.lengths[i] = token_bytes.len() as u8;
-                            found_slot = true;
+                let mut inserted = false;
+                for i in 0..16 {
+                    let idx = (bucket_idx + i) & (hash_mask as usize);
+                    let bucket = &mut hash_table[idx];
+                    for slot in 0..8 {
+                        if bucket.ids[slot] == 0 {
+                            bucket.hashes[slot] = h;
+                            bucket.ids[slot] = id + 1;
+                            bucket.lengths[slot] = bytes.len() as u8;
+                            inserted = true;
                             break;
                         }
                     }
-                    if found_slot {
+                    if inserted {
                         break;
                     }
                 }
             }
         }
 
-        let cls_id = vocabulary.cls_token_id();
-        let sep_id = vocabulary.sep_token_id();
-        let unk_id = vocabulary.unk_token_id().unwrap_or(0);
-        let prefix_bytes = config.continuing_subword_prefix.as_bytes().to_vec();
+        let cls_id = vocabulary.cls_token().and_then(|t| vocabulary.token_to_id(t));
+        let sep_id = vocabulary.sep_token().and_then(|t| vocabulary.token_to_id(t));
+        let unk_id = vocabulary
+            .unk_token()
+            .and_then(|t| vocabulary.token_to_id(t))
+            .unwrap_or(0);
 
         Self {
             single_byte_lookup,
@@ -288,8 +281,69 @@ impl HyperWordPieceTokenizer {
             unk_id,
             prefix_bytes,
             #[cfg(target_arch = "x86_64")]
-            has_avx2: is_x86_feature_detected!("avx2"),
+            has_avx2: is_avx2_available(),
         }
+    }
+
+    /// Load a tokenizer from a JSON file
+    pub fn from_pretrained(path: impl AsRef<std::path::Path>) -> crate::error::Result<Self> {
+        use crate::config::TokenizerConfig;
+        let config = TokenizerConfig::from_file(path)?;
+        Self::from_config(config)
+    }
+
+    /// Create a tokenizer from a TokenizerConfig
+    pub fn from_config(config: crate::config::TokenizerConfig) -> crate::error::Result<Self> {
+        if !config.is_wordpiece() {
+            return Err(crate::error::Error::InvalidConfig(
+                "Not a WordPiece tokenizer config".to_string(),
+            ));
+        }
+
+        let vocab = crate::vocab::Vocabulary::new(
+            config.model.get_vocab(),
+            crate::vocab::SpecialTokens {
+                unk_token: config.model.unk_token.clone(),
+                pad_token: config.get_special_token("pad").map(|t| t.content.clone()),
+                cls_token: config.get_special_token("cls").map(|t| t.content.clone()),
+                sep_token: config.get_special_token("sep").map(|t| t.content.clone()),
+                mask_token: config.get_special_token("mask").map(|t| t.content.clone()),
+                bos_token: config.get_special_token("bos").map(|t| t.content.clone()),
+                eos_token: config.get_special_token("eos").map(|t| t.content.clone()),
+            },
+        );
+
+        let hyper_config = HyperConfig {
+            continuing_subword_prefix: config
+                .model
+                .continuing_subword_prefix
+                .clone()
+                .unwrap_or_else(|| "##".to_string()),
+            max_input_chars_per_word: config.model.max_input_chars_per_word.unwrap_or(100),
+            unk_token: config
+                .model
+                .unk_token
+                .clone()
+                .unwrap_or_else(|| "[UNK]".to_string()),
+            do_lower_case: config
+                .normalizer
+                .as_ref()
+                .and_then(|n| n.lowercase)
+                .unwrap_or(true),
+            strip_accents: config
+                .normalizer
+                .as_ref()
+                .and_then(|n| n.strip_accents)
+                .unwrap_or(true),
+            tokenize_chinese_chars: config
+                .normalizer
+                .as_ref()
+                .and_then(|n| n.handle_chinese_chars)
+                .unwrap_or(true),
+            hash_table_bits: 14, // Default
+        };
+
+        Ok(Self::new(vocab, hyper_config))
     }
 
     /// Direct hash lookup for token (returns token_id + 1, or 0 if not found)
@@ -1827,11 +1881,88 @@ impl crate::tokenizer::Tokenizer for HyperWordPieceTokenizer {
         Ok(HyperWordPieceTokenizer::decode(self, ids, skip_special_tokens))
     }
 
-    fn save(&self, _path: &std::path::Path) -> crate::error::Result<()> {
-        Err(crate::error::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Saving not yet implemented for HyperWordPieceTokenizer",
-        )))
+    fn save(&self, path: &std::path::Path) -> crate::error::Result<()> {
+        use crate::config::{TokenizerConfig, ModelConfig, VocabFormat, AddedToken};
+
+        let mut added_tokens = Vec::new();
+        if let Some(token) = self.vocabulary().pad_token() {
+            if let Some(id) = self.vocabulary().token_to_id(token) {
+                added_tokens.push(AddedToken { id, content: token.to_string(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+            }
+        }
+        if let Some(token) = self.vocabulary().unk_token() {
+            if let Some(id) = self.vocabulary().token_to_id(token) {
+                added_tokens.push(AddedToken { id, content: token.to_string(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+            }
+        }
+        if let Some(token) = self.vocabulary().cls_token() {
+            if let Some(id) = self.vocabulary().token_to_id(token) {
+                added_tokens.push(AddedToken { id, content: token.to_string(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+            }
+        }
+        if let Some(token) = self.vocabulary().sep_token() {
+            if let Some(id) = self.vocabulary().token_to_id(token) {
+                added_tokens.push(AddedToken { id, content: token.to_string(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+            }
+        }
+
+        let config = TokenizerConfig {
+            version: "1.0".to_string(),
+            truncation: None,
+            padding: None,
+            added_tokens,
+            normalizer: Some(crate::config::NormalizerConfig {
+                normalizer_type: "BertNormalizer".to_string(),
+                clean_text: Some(true),
+                handle_chinese_chars: Some(self.config.tokenize_chinese_chars),
+                strip_accents: Some(self.config.strip_accents),
+                lowercase: Some(self.config.do_lower_case),
+                normalizers: None,
+                pattern: None,
+                content: None,
+            }),
+            pre_tokenizer: Some(crate::config::PreTokenizerConfig {
+                pretokenizer_type: "BertPreTokenizer".to_string(),
+                add_prefix_space: None,
+                replacement: None,
+                use_regex: None,
+                pretokenizers: None,
+                pattern: None,
+                behavior: None,
+                invert: None,
+            }),
+            post_processor: Some(crate::config::PostProcessorConfig {
+                processor_type: "BertProcessing".to_string(),
+                single: None,
+                pair: None,
+                special_tokens: None,
+                cls: self.vocabulary().cls_token().and_then(|t| self.vocabulary().token_to_id(t).map(|id| (t.to_string(), id))),
+                sep: self.vocabulary().sep_token().and_then(|t| self.vocabulary().token_to_id(t).map(|id| (t.to_string(), id))),
+            }),
+            decoder: Some(crate::config::DecoderConfig {
+                decoder_type: "WordPiece".to_string(),
+                prefix: Some(self.config.continuing_subword_prefix.clone()),
+                cleanup: Some(true),
+                replacement: None,
+                add_prefix_space: None,
+                decoders: None,
+            }),
+            model: ModelConfig {
+                model_type: "WordPiece".to_string(),
+                unk_token: Some(self.config.unk_token.clone()),
+                unk_id: None,
+                continuing_subword_prefix: Some(self.config.continuing_subword_prefix.clone()),
+                max_input_chars_per_word: Some(self.config.max_input_chars_per_word),
+                vocab: VocabFormat::Dict(self.vocabulary().token_to_id_map().iter().map(|(k, &v)| (k.clone(), v)).collect()),
+                merges: None,
+                end_of_word_suffix: None,
+                fuse_unk: None,
+                byte_fallback: None,
+                dropout: None,
+            },
+        };
+
+        config.save(path, true)
     }
 }
 

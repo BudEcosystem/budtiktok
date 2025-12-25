@@ -21,6 +21,7 @@
 
 use ahash;
 use anyhow::{Context, Result};
+#[cfg(feature = "blazetext")]
 use blazetext_wordpiece::BertWordPieceTokenizer;
 use budtiktok_core::tokenizer::Tokenizer;
 use budtiktok_core::wordpiece::{WordPieceConfig, WordPieceTokenizer};
@@ -621,10 +622,12 @@ impl TokenizerBackend for TeiBackend {
 }
 
 /// BlazeText backend using blazetext_wordpiece crate
+#[cfg(feature = "blazetext")]
 struct BlazeTextBackend {
     tokenizer: BertWordPieceTokenizer,
 }
 
+#[cfg(feature = "blazetext")]
 impl BlazeTextBackend {
     fn new(model_path: &str) -> Result<Self> {
         let tokenizer = BertWordPieceTokenizer::from_file(model_path)
@@ -634,6 +637,7 @@ impl BlazeTextBackend {
     }
 }
 
+#[cfg(feature = "blazetext")]
 impl TokenizerBackend for BlazeTextBackend {
     fn name(&self) -> &str {
         "BlazeText"
@@ -665,7 +669,10 @@ fn create_backend(backend: Backend, tokenizer: &str) -> Result<Box<dyn Tokenizer
             let tei_url = std::env::var("TEI_URL").unwrap_or_else(|_| "http://localhost:8080".into());
             Ok(Box::new(TeiBackend::new(&tei_url)?))
         }
+        #[cfg(feature = "blazetext")]
         Backend::Blazetext => Ok(Box::new(BlazeTextBackend::new(tokenizer)?)),
+        #[cfg(not(feature = "blazetext"))]
+        Backend::Blazetext => Err(anyhow::anyhow!("BlazeText backend not enabled. Recompile with --features blazetext")),
     }
 }
 

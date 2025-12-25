@@ -53,6 +53,7 @@ criterion.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 tokenizers.workspace = true
+tempfile = "3.9"
 
 [[bench]]
 name = "scalar_tokenization"

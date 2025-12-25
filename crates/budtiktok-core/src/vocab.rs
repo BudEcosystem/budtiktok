@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::error::{Error, Result};
 
 /// Vocabulary structure for token-to-ID and ID-to-token mappings
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vocabulary {
     /// Token string to token ID mapping
     token_to_id: AHashMap<String, u32>,
@@ -141,6 +141,46 @@ impl Vocabulary {
     /// Set special tokens
     pub fn set_special_tokens(&mut self, special_tokens: SpecialTokens) {
         self.special_tokens = special_tokens;
+    }
+
+    /// Get the unknown token string
+    pub fn unk_token(&self) -> Option<&str> {
+        self.special_tokens.unk_token.as_deref()
+    }
+
+    /// Get the padding token string
+    pub fn pad_token(&self) -> Option<&str> {
+        self.special_tokens.pad_token.as_deref()
+    }
+
+    /// Get the CLS token string
+    pub fn cls_token(&self) -> Option<&str> {
+        self.special_tokens.cls_token.as_deref()
+    }
+
+    /// Get the SEP token string
+    pub fn sep_token(&self) -> Option<&str> {
+        self.special_tokens.sep_token.as_deref()
+    }
+
+    /// Get the mask token string
+    pub fn mask_token(&self) -> Option<&str> {
+        self.special_tokens.mask_token.as_deref()
+    }
+
+    /// Get the BOS token string
+    pub fn bos_token(&self) -> Option<&str> {
+        self.special_tokens.bos_token.as_deref()
+    }
+
+    /// Get the EOS token string
+    pub fn eos_token(&self) -> Option<&str> {
+        self.special_tokens.eos_token.as_deref()
+    }
+
+    /// Get the token to ID map
+    pub fn token_to_id_map(&self) -> &AHashMap<String, u32> {
+        &self.token_to_id
     }
 
     /// Iterate over all tokens

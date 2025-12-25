@@ -8,6 +8,7 @@
 
 use ahash;
 use anyhow::{Context, Result};
+#[cfg(feature = "blazetext")]
 use blazetext_wordpiece::BertWordPieceTokenizer;
 use budtiktok_core::vocab::{SpecialTokens, Vocabulary};
 use budtiktok_core::wordpiece::{WordPieceConfig, WordPieceTokenizer};
@@ -539,6 +540,7 @@ fn main() -> Result<()> {
     let mut skipped_configs = 0usize;
 
     // ===== BLAZETEXT =====
+    #[cfg(feature = "blazetext")]
     if !skipped.contains("blazetext") {
         println!("{}", "▶ BlazeText".cyan().bold());
         let blazetext = BertWordPieceTokenizer::from_file(&cli.tokenizer)

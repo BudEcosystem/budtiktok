@@ -17,6 +17,8 @@ use std::path::Path;
 // BudTikTok implementations
 use budtiktok_core::unigram::UnigramPiece;
 use budtiktok_core::unigram_fast::{UnigramFast, UnigramFastConfig};
+use budtiktok_core::vocab::{Vocabulary, SpecialTokens};
+use ahash::AHashMap;
 
 // HuggingFace tokenizers for comparison
 use tokenizers::Tokenizer as HfTokenizer;
@@ -118,7 +120,16 @@ fn load_unigram_fast_tokenizer() -> Option<UnigramFast> {
             ..Default::default()
         };
 
-        Some(UnigramFast::new(vocab, pieces, config))
+        let mut vocab_map = AHashMap::with_capacity(vocab.len());
+        for (i, token) in vocab.iter().enumerate() {
+            vocab_map.insert(token.clone(), i as u32);
+        }
+        let vocabulary = Vocabulary::new(vocab_map, SpecialTokens {
+            unk_token: model.get("unk_token").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            ..Default::default()
+        });
+
+        Some(UnigramFast::new(vocabulary, pieces, config))
     } else {
         None
     }

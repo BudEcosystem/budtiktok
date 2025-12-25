@@ -8,6 +8,7 @@
 //! - N-best decoding (top-N segmentations)
 //! - Stochastic sampling
 
+use serde::{Deserialize, Serialize};
 use ahash::AHashMap;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -24,7 +25,7 @@ use crate::vocab::Vocabulary;
 // ============================================================================
 
 /// Unigram model piece with score
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnigramPiece {
     /// Token string
     pub token: String,
@@ -33,7 +34,7 @@ pub struct UnigramPiece {
 }
 
 /// Unigram tokenizer configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnigramConfig {
     /// Unknown token
     pub unk_token: String,

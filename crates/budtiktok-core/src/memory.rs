@@ -141,10 +141,8 @@ impl Default for ScopedArena {
 ///
 /// For safe usage with bounded lifetimes, use `intern_bounded()` instead.
 pub struct StringInterner {
-    /// Set of interned strings (Box<str> for stable addresses)
-    strings: RwLock<AHashSet<&'static str>>,
-    /// Storage for the actual strings
-    storage: Mutex<Vec<Box<str>>>,
+    /// Set of interned strings
+    strings: RwLock<AHashSet<Arc<str>>>,
     /// Statistics
     stats: InternerStats,
 }
@@ -167,7 +165,6 @@ impl StringInterner {
     pub fn new() -> Self {
         Self {
             strings: RwLock::new(AHashSet::new()),
-            storage: Mutex::new(Vec::new()),
             stats: InternerStats::default(),
         }
     }
@@ -176,7 +173,6 @@ impl StringInterner {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             strings: RwLock::new(AHashSet::with_capacity(capacity)),
-            storage: Mutex::new(Vec::with_capacity(capacity)),
             stats: InternerStats::default(),
         }
     }
@@ -187,35 +183,27 @@ impl StringInterner {
     /// If the string is already interned, returns the existing reference.
     #[inline]
     pub fn intern_bounded<'a>(&'a self, s: &str) -> &'a str {
-        // SAFETY: We return the reference with lifetime 'a which is bounded
-        // to self, ensuring the string cannot outlive the interner
-        unsafe { std::mem::transmute::<&'static str, &'a str>(self.intern(s)) }
+        // SAFETY: We return a reference to the string data owned by an Arc
+        // inside our HashSet. Since we never remove from the HashSet, and
+        // Arc<str> has a stable data address, this reference is valid as
+        // long as the interner (self) exists.
+        let arc = self.intern(s);
+        unsafe { std::mem::transmute::<&str, &'a str>(&*arc) }
     }
 
-    /// Intern a string, returning a `&'static str` reference.
+    /// Intern a string, returning an `Arc<str>` reference.
     ///
-    /// # Safety Warning
-    /// The returned `&'static str` is only valid as long as the `StringInterner` exists.
-    /// Using the returned reference after the interner is dropped is **undefined behavior**.
-    ///
-    /// This method is safe to use when:
-    /// - The interner is stored in a `static` variable
-    /// - The interner is kept alive via `Arc` for as long as references are used
-    ///
-    /// For bounded lifetime semantics, prefer `intern_bounded()` instead.
-    ///
-    /// # Implementation Details
-    /// Strings are stored in Box<str> which provides a stable address.
-    /// The Vec<Box<str>> storage never removes elements while the interner exists.
-    pub fn intern(&self, s: &str) -> &'static str {
+    /// This is the safe, modern version of interning that ensures the string
+    /// stays alive as long as any reference to it exists.
+    pub fn intern(&self, s: &str) -> Arc<str> {
         self.stats.requests.fetch_add(1, Ordering::Relaxed);
 
         // Fast path: check if already interned
         {
             let strings = self.strings.read();
-            if let Some(&interned) = strings.get(s) {
+            if let Some(interned) = strings.get(s) {
                 self.stats.hits.fetch_add(1, Ordering::Relaxed);
-                return interned;
+                return Arc::clone(interned);
             }
         }
 
@@ -223,30 +211,23 @@ impl StringInterner {
         let mut strings = self.strings.write();
 
         // Double-check after acquiring write lock
-        if let Some(&interned) = strings.get(s) {
+        if let Some(interned) = strings.get(s) {
             self.stats.hits.fetch_add(1, Ordering::Relaxed);
-            return interned;
+            return Arc::clone(interned);
         }
 
         // Intern the string
-        let boxed: Box<str> = s.into();
-        let static_ref: &'static str = unsafe {
-            // SAFETY: We're creating a &'static str from a Box<str> that we
-            // store in self.storage. The storage is never freed or modified
-            // while the interner exists, and the string is never removed.
-            std::mem::transmute::<&str, &'static str>(&*boxed)
-        };
+        let arc: Arc<str> = Arc::from(s);
+        let result = Arc::clone(&arc);
 
         self.stats
             .bytes_stored
             .fetch_add(s.len(), Ordering::Relaxed);
         self.stats.interned.fetch_add(1, Ordering::Relaxed);
 
-        let mut storage = self.storage.lock();
-        storage.push(boxed);
-        strings.insert(static_ref);
+        strings.insert(arc);
 
-        static_ref
+        result
     }
 
     /// Check if a string is already interned
@@ -594,9 +575,14 @@ where
 static GLOBAL_INTERNER: once_cell::sync::Lazy<StringInterner> =
     once_cell::sync::Lazy::new(|| StringInterner::with_capacity(100_000));
 
-/// Intern a string using the global interner
+/// Intern a string using the global interner, returning a `&'static str`.
+///
+/// This is safe because the global interner is static and never freed.
 pub fn intern(s: &str) -> &'static str {
-    GLOBAL_INTERNER.intern(s)
+    let arc = GLOBAL_INTERNER.intern(s);
+    // SAFETY: GLOBAL_INTERNER is static and never removes elements.
+    // The string data in Arc<str> is at a stable address.
+    unsafe { std::mem::transmute::<&str, &'static str>(&*arc) }
 }
 
 /// Get statistics from the global interner
@@ -612,9 +598,9 @@ pub fn global_interner_stats() -> InternerStatsSnapshot {
 /// All tokens are interned, so repeated tokens share the same memory.
 pub struct InternedVocabulary {
     /// Token string to token ID mapping
-    token_to_id: AHashMap<&'static str, u32>,
+    token_to_id: AHashMap<Arc<str>, u32>,
     /// Token ID to token string mapping
-    id_to_token: Vec<&'static str>,
+    id_to_token: Vec<Arc<str>>,
     /// The interner (may be shared or owned)
     interner: Arc<StringInterner>,
 }
@@ -628,7 +614,7 @@ impl InternedVocabulary {
 
         for (id, token) in tokens.into_iter().enumerate() {
             let interned = interner.intern(token.as_ref());
-            token_to_id.insert(interned, id as u32);
+            token_to_id.insert(Arc::clone(&interned), id as u32);
             id_to_token.push(interned);
         }
 
@@ -649,7 +635,7 @@ impl InternedVocabulary {
 
         for (id, token) in tokens.into_iter().enumerate() {
             let interned = interner.intern(token.as_ref());
-            token_to_id.insert(interned, id as u32);
+            token_to_id.insert(Arc::clone(&interned), id as u32);
             id_to_token.push(interned);
         }
 
@@ -663,20 +649,13 @@ impl InternedVocabulary {
     /// Get the token ID for a token string
     #[inline]
     pub fn token_to_id(&self, token: &str) -> Option<u32> {
-        // First check if this exact string is in our map
-        // We need to intern to get the same pointer
-        if self.interner.contains(token) {
-            let interned = self.interner.intern(token);
-            self.token_to_id.get(interned).copied()
-        } else {
-            None
-        }
+        self.token_to_id.get(token).copied()
     }
 
     /// Get the token string for a token ID
     #[inline]
     pub fn id_to_token(&self, id: u32) -> Option<&str> {
-        self.id_to_token.get(id as usize).copied()
+        self.id_to_token.get(id as usize).map(|arc| &**arc)
     }
 
     /// Get the vocabulary size
@@ -694,12 +673,7 @@ impl InternedVocabulary {
     /// Check if a token exists in the vocabulary
     #[inline]
     pub fn contains(&self, token: &str) -> bool {
-        if self.interner.contains(token) {
-            let interned = self.interner.intern(token);
-            self.token_to_id.contains_key(interned)
-        } else {
-            false
-        }
+        self.token_to_id.contains_key(token)
     }
 
     /// Get the interner statistics
@@ -709,7 +683,7 @@ impl InternedVocabulary {
 
     /// Iterate over all tokens
     pub fn iter(&self) -> impl Iterator<Item = (&str, u32)> {
-        self.token_to_id.iter().map(|(&k, &v)| (k, v))
+        self.token_to_id.iter().map(|(k, &v)| (&**k, v))
     }
 }
 
@@ -754,9 +728,9 @@ mod tests {
         let s2 = interner.intern("world");
         let s3 = interner.intern("hello"); // Should return same reference
 
-        assert_eq!(s1, "hello");
-        assert_eq!(s2, "world");
-        assert!(std::ptr::eq(s1, s3)); // Same pointer
+        assert_eq!(&*s1, "hello");
+        assert_eq!(&*s2, "world");
+        assert!(Arc::ptr_eq(&s1, &s3)); // Same pointer
         assert_eq!(interner.len(), 2);
     }
 

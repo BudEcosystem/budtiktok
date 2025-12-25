@@ -974,71 +974,87 @@ mod simd_classify {
     pub unsafe fn classify_avx2(bytes: &[u8; 32]) -> [u8; 32] {
         use std::arch::x86_64::*;
 
-        // PSHUFB nibble lookup tables for character classification
-        // Low nibble table: maps low 4 bits to possible classes
-        // High nibble table: maps high 4 bits to possible classes
-        // Result = lo_table[lo_nibble] & hi_table[hi_nibble]
+        let input = _mm256_loadu_si256(bytes.as_ptr() as *const __m256i);
 
-        // Build lo table: for each low nibble value (0-15), what classes are possible?
-        let lo_table = _mm256_setr_epi8(
-            // lo=0: possible for 0x00(ctrl), 0x10(ctrl), 0x20(space), 0x30('0'), 0x40('@'), 0x50('P'), 0x60('`'), 0x70('p')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_SPACE as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8 | ASCII_CLASS_OTHER as i8,
-            // lo=1: 0x01(ctrl), 0x11(ctrl), 0x21('!'), 0x31('1'), 0x41('A'), 0x51('Q'), 0x61('a'), 0x71('q')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=2: 0x02(ctrl), 0x12(ctrl), 0x22('"'), 0x32('2'), 0x42('B'), 0x52('R'), 0x62('b'), 0x72('r')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=3: 0x03(ctrl), 0x13(ctrl), 0x23('#'), 0x33('3'), 0x43('C'), 0x53('S'), 0x63('c'), 0x73('s')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=4: 0x04(ctrl), 0x14(ctrl), 0x24('$'), 0x34('4'), 0x44('D'), 0x54('T'), 0x64('d'), 0x74('t')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=5: 0x05(ctrl), 0x15(ctrl), 0x25('%'), 0x35('5'), 0x45('E'), 0x55('U'), 0x65('e'), 0x75('u')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=6: 0x06(ctrl), 0x16(ctrl), 0x26('&'), 0x36('6'), 0x46('F'), 0x56('V'), 0x66('f'), 0x76('v')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=7: 0x07(ctrl), 0x17(ctrl), 0x27('\''), 0x37('7'), 0x47('G'), 0x57('W'), 0x67('g'), 0x77('w')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_APOSTROPHE as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=8: 0x08(ctrl), 0x18(ctrl), 0x28('('), 0x38('8'), 0x48('H'), 0x58('X'), 0x68('h'), 0x78('x')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=9: 0x09(tab), 0x19(ctrl), 0x29(')'), 0x39('9'), 0x49('I'), 0x59('Y'), 0x69('i'), 0x79('y')
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=A: 0x0A(newline), 0x1A(ctrl), 0x2A('*'), 0x3A(':'), 0x4A('J'), 0x5A('Z'), 0x6A('j'), 0x7A('z')
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=B: 0x0B(vtab), 0x1B(esc), 0x2B('+'), 0x3B(';'), 0x4B('K'), 0x5B('['), 0x6B('k'), 0x7B('{')
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=C: 0x0C(formfeed), 0x1C(ctrl), 0x2C(','), 0x3C('<'), 0x4C('L'), 0x5C('\\'), 0x6C('l'), 0x7C('|')
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=D: 0x0D(cr), 0x1D(ctrl), 0x2D('-'), 0x3D('='), 0x4D('M'), 0x5D(']'), 0x6D('m'), 0x7D('}')
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=E: 0x0E(ctrl), 0x1E(ctrl), 0x2E('.'), 0x3E('>'), 0x4E('N'), 0x5E('^'), 0x6E('n'), 0x7E('~')
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            // lo=F: 0x0F(ctrl), 0x1F(ctrl), 0x2F('/'), 0x3F('?'), 0x4F('O'), 0x5F('_'), 0x6F('o'), 0x7F(del)
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            // Duplicate for second lane (AVX2 operates on two 128-bit lanes)
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_SPACE as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8 | ASCII_CLASS_OTHER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_APOSTROPHE as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_DIGIT as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_WHITESPACE as i8 | ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
-            ASCII_CLASS_OTHER as i8 | ASCII_CLASS_LETTER as i8,
+        // Letters: 'A'-'Z' (0x41-0x5A) and 'a'-'z' (0x61-0x7A)
+        let is_upper = _mm256_and_si256(
+            _mm256_cmpgt_epi8(input, _mm256_set1_epi8(0x40)),
+            _mm256_cmpgt_epi8(_mm256_set1_epi8(0x5B), input),
+        );
+        let is_lower = _mm256_and_si256(
+            _mm256_cmpgt_epi8(input, _mm256_set1_epi8(0x60)),
+            _mm256_cmpgt_epi8(_mm256_set1_epi8(0x7B), input),
+        );
+        let is_letter = _mm256_or_si256(is_upper, is_lower);
+
+        // Digits: '0'-'9' (0x30-0x39)
+        let is_digit = _mm256_and_si256(
+            _mm256_cmpgt_epi8(input, _mm256_set1_epi8(0x2F)),
+            _mm256_cmpgt_epi8(_mm256_set1_epi8(0x3A), input),
         );
 
-        // For simplicity, use direct table lookup instead of PSHUFB
-        // This is still fast and more accurate
-        let mut result = [0u8; 32];
-        for i in 0..32 {
-            result[i] = ASCII_CLASS_TABLE[bytes[i] as usize];
-        }
-        result
+        // Space: 0x20
+        let is_space = _mm256_cmpeq_epi8(input, _mm256_set1_epi8(0x20));
+
+        // Apostrophe: 0x27
+        let is_apostrophe = _mm256_cmpeq_epi8(input, _mm256_set1_epi8(0x27));
+
+        // Whitespace: \t(0x09), \n(0x0A), \v(0x0B), \f(0x0C), \r(0x0D)
+        let is_whitespace = _mm256_and_si256(
+            _mm256_cmpgt_epi8(input, _mm256_set1_epi8(0x08)),
+            _mm256_cmpgt_epi8(_mm256_set1_epi8(0x0E), input),
+        );
+
+        // High bit: >= 0x80
+        // epi8 is signed, so >= 0x80 means < 0
+        let is_high = _mm256_cmpgt_epi8(_mm256_set1_epi8(0), input);
+
+        // Combine into classes
+        let mut res = _mm256_and_si256(is_letter, _mm256_set1_epi8(ASCII_CLASS_LETTER as i8));
+        res = _mm256_or_si256(
+            res,
+            _mm256_and_si256(is_digit, _mm256_set1_epi8(ASCII_CLASS_DIGIT as i8)),
+        );
+        res = _mm256_or_si256(
+            res,
+            _mm256_and_si256(is_space, _mm256_set1_epi8(ASCII_CLASS_SPACE as i8)),
+        );
+        res = _mm256_or_si256(
+            res,
+            _mm256_and_si256(
+                is_apostrophe,
+                _mm256_set1_epi8(ASCII_CLASS_APOSTROPHE as i8),
+            ),
+        );
+        res = _mm256_or_si256(
+            res,
+            _mm256_and_si256(
+                is_whitespace,
+                _mm256_set1_epi8(ASCII_CLASS_WHITESPACE as i8),
+            ),
+        );
+        res = _mm256_or_si256(
+            res,
+            _mm256_and_si256(is_high, _mm256_set1_epi8(ASCII_CLASS_HIGH_BIT as i8)),
+        );
+
+        // Other: if none of the above and < 0x80
+        let identified_mask = _mm256_or_si256(
+            _mm256_or_si256(is_letter, is_digit),
+            _mm256_or_si256(
+                _mm256_or_si256(is_space, is_apostrophe),
+                _mm256_or_si256(is_whitespace, is_high),
+            ),
+        );
+        let is_other = _mm256_andnot_si256(identified_mask, _mm256_set1_epi8(-1));
+        res = _mm256_or_si256(
+            res,
+            _mm256_and_si256(is_other, _mm256_set1_epi8(ASCII_CLASS_OTHER as i8)),
+        );
+
+        let mut output = [0u8; 32];
+        _mm256_storeu_si256(output.as_mut_ptr() as *mut __m256i, res);
+        output
     }
 
     /// Find word boundaries in classified ASCII text
@@ -2454,6 +2470,15 @@ impl OptimizedBpeEncoder {
 
     /// O(n log n) heap-based merge for longer sequences
     ///
+    /// Complexity Analysis:
+    /// 1. Initialization: O(n) to build linked list and O(n log n) to build initial heap.
+    /// 2. Processing: At most n-1 merges. Each merge involves:
+    ///    - 1x pop from heap: O(log n)
+    ///    - Constant number of linked list updates: O(1)
+    ///    - At most 2x pushes to heap: O(log n)
+    /// 3. Compaction: O(n) to collect valid tokens.
+    /// Total: O(n log n) where n is the number of initial tokens.
+    ///
     /// Uses a binary heap (std::collections::BinaryHeap) with lazy deletion.
     /// Heap entries are validated before use to handle stale entries.
     #[inline]
@@ -2643,6 +2668,7 @@ impl OptimizedBpeEncoder {
 // BPE Tokenizer Types (for loader compatibility)
 // =============================================================================
 
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use crate::encoding::Encoding;
 use crate::error::{Error, Result};
@@ -2650,7 +2676,7 @@ use crate::tokenizer::Tokenizer;
 use crate::vocab::Vocabulary;
 
 /// BPE merge rule
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRule {
     /// First token in merge
     pub first: String,
@@ -2663,7 +2689,7 @@ pub struct MergeRule {
 }
 
 /// BPE tokenizer configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BpeConfig {
     /// Unknown token
     pub unk_token: String,
@@ -2706,6 +2732,8 @@ pub struct BpeTokenizer {
     vocabulary: Vocabulary,
     /// Configuration
     config: BpeConfig,
+    /// Merge rules
+    merges: Vec<MergeRule>,
 }
 
 impl BpeTokenizer {
@@ -2729,12 +2757,65 @@ impl BpeTokenizer {
             encoder,
             vocabulary,
             config,
+            merges,
         }
     }
 
     /// Get the underlying encoder for direct access
     pub fn encoder(&self) -> &OptimizedBpeEncoder {
         &self.encoder
+    }
+
+    /// Load a tokenizer from a JSON file
+    pub fn from_pretrained(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        use crate::config::TokenizerConfig;
+        let config = TokenizerConfig::from_file(path)?;
+        Self::from_config(config)
+    }
+
+    /// Create a tokenizer from a TokenizerConfig
+    pub fn from_config(config: crate::config::TokenizerConfig) -> Result<Self> {
+        if !config.is_bpe() {
+            return Err(Error::invalid_config("Not a BPE tokenizer config"));
+        }
+
+        let vocab = Vocabulary::new(
+            config.model.get_vocab(),
+            crate::vocab::SpecialTokens {
+                unk_token: config.model.unk_token.clone(),
+                pad_token: config.get_special_token("pad").map(|t| t.content.clone()),
+                cls_token: config.get_special_token("cls").map(|t| t.content.clone()),
+                sep_token: config.get_special_token("sep").map(|t| t.content.clone()),
+                mask_token: config.get_special_token("mask").map(|t| t.content.clone()),
+                bos_token: config.get_special_token("bos").map(|t| t.content.clone()),
+                eos_token: config.get_special_token("eos").map(|t| t.content.clone()),
+            },
+        );
+
+        let merges_raw = config.model.parse_merges();
+
+        let mut merges = Vec::with_capacity(merges_raw.len());
+        for (i, (first, second)) in merges_raw.into_iter().enumerate() {
+            let result = format!("{}{}", first, second);
+            merges.push(MergeRule {
+                first,
+                second,
+                result,
+                priority: i as u32,
+            });
+        }
+
+        let bpe_config = BpeConfig {
+            unk_token: config.model.unk_token.clone().unwrap_or_else(|| "<unk>".to_string()),
+            end_of_word_suffix: config.model.end_of_word_suffix.clone(),
+            continuing_subword_prefix: config.model.continuing_subword_prefix.clone(),
+            fuse_unk: config.model.fuse_unk.unwrap_or(false),
+            byte_level: config.model.model_type == "BPE", // Assume byte-level if BPE
+            dropout: config.model.dropout.unwrap_or(0.0),
+            use_linear_algorithm: true,
+        };
+
+        Ok(Self::new(vocab, merges, bpe_config))
     }
 }
 
@@ -2853,8 +2934,71 @@ impl Tokenizer for BpeTokenizer {
         }
     }
 
-    fn save(&self, _path: &Path) -> Result<()> {
-        Err(Error::Tokenization("BpeTokenizer::save not implemented".to_string()))
+    fn save(&self, path: &Path) -> Result<()> {
+        use crate::config::{TokenizerConfig, ModelConfig, VocabFormat, AddedToken};
+
+        let mut added_tokens = Vec::new();
+        if let Some(token) = self.vocabulary.unk_token() {
+            if let Some(id) = self.vocabulary.token_to_id(token) {
+                added_tokens.push(AddedToken { id, content: token.to_string(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+            }
+        }
+        if let Some(token) = self.vocabulary.pad_token() {
+            if let Some(id) = self.vocabulary.token_to_id(token) {
+                added_tokens.push(AddedToken { id, content: token.to_string(), single_word: false, lstrip: false, rstrip: false, normalized: true, special: true });
+            }
+        }
+
+        let merges: Vec<String> = self.merges.iter().map(|m| format!("{} {}", m.first, m.second)).collect();
+
+        let config = TokenizerConfig {
+            version: "1.0".to_string(),
+            truncation: None,
+            padding: None,
+            added_tokens,
+            normalizer: None,
+            pre_tokenizer: Some(crate::config::PreTokenizerConfig {
+                pretokenizer_type: "ByteLevel".to_string(),
+                add_prefix_space: Some(self.config.continuing_subword_prefix.is_some()),
+                replacement: None,
+                use_regex: Some(true),
+                pretokenizers: None,
+                pattern: None,
+                behavior: None,
+                invert: None,
+            }),
+            post_processor: Some(crate::config::PostProcessorConfig {
+                processor_type: "ByteLevel".to_string(),
+                single: None,
+                pair: None,
+                special_tokens: None,
+                cls: None,
+                sep: None,
+            }),
+            decoder: Some(crate::config::DecoderConfig {
+                decoder_type: "ByteLevel".to_string(),
+                prefix: None,
+                cleanup: Some(true),
+                replacement: None,
+                add_prefix_space: None,
+                decoders: None,
+            }),
+            model: ModelConfig {
+                model_type: "BPE".to_string(),
+                unk_token: Some(self.config.unk_token.clone()),
+                unk_id: None,
+                continuing_subword_prefix: self.config.continuing_subword_prefix.clone(),
+                max_input_chars_per_word: None,
+                vocab: VocabFormat::Dict(self.vocabulary.token_to_id_map().iter().map(|(k, &v)| (k.clone(), v)).collect()),
+                merges: Some(crate::config::MergesFormat::Strings(merges)),
+                end_of_word_suffix: self.config.end_of_word_suffix.clone(),
+                fuse_unk: Some(self.config.fuse_unk),
+                byte_fallback: None,
+                dropout: Some(self.config.dropout),
+            },
+        };
+
+        config.save(path, true)
     }
 }
 

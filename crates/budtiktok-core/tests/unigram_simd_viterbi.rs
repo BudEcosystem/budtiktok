@@ -9,7 +9,9 @@
 
 use budtiktok_core::unigram::UnigramPiece;
 use budtiktok_core::unigram_fast::{UnigramFast, UnigramFastConfig};
+use budtiktok_core::vocab::{Vocabulary, SpecialTokens};
 use tokenizers::Tokenizer as HfTokenizer;
+use ahash::AHashMap;
 use std::time::Instant;
 
 const XLNET_PATH: &str = "/home/bud/Desktop/latentbud/budtiktok/benchmark_data/xlnet/tokenizer.json";
@@ -57,7 +59,16 @@ fn load_tokenizers() -> Option<(UnigramFast, HfTokenizer)> {
         ..Default::default()
     };
 
-    let fast_tok = UnigramFast::new(vocab, pieces, config);
+    let mut vocab_map = AHashMap::with_capacity(vocab.len());
+    for (i, token) in vocab.iter().enumerate() {
+        vocab_map.insert(token.clone(), i as u32);
+    }
+    let vocabulary = Vocabulary::new(vocab_map, SpecialTokens {
+        unk_token: model.get("unk_token").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        ..Default::default()
+    });
+
+    let fast_tok = UnigramFast::new(vocabulary, pieces, config);
     Some((fast_tok, hf_tok))
 }
 

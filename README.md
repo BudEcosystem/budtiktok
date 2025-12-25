@@ -99,6 +99,35 @@ This design allows for:
 2.  **Zero-Copy Optimizations**: Extensive use of `Cow<str>` and memory mapping.
 3.  **Lock-Free Concurrency**: `RwLock` for read-heavy vocabulary access and `Arc` for shared immutable components.
 
+## 🆕 Recent Updates (Dec 2025)
+
+### Memory Safety Refactor
+- **Arc<str> StringInterner** - Eliminated potential use-after-free risks with reference-counted string storage
+- **Thread-safe vocabulary** - All interned strings are protected by `Arc` for safe concurrent access
+- **Zero unsafe transmute** in hot paths - Safety-critical code now uses bounded lifetimes
+
+### Full HuggingFace Serialization
+- **`save()` and `from_pretrained()`** - Full compatibility with HuggingFace `tokenizer.json` format
+- **Roundtrip verified** - All tokenizer types (BPE, WordPiece, Unigram) pass serialization tests
+- **Model versioning** - Deterministic config hashes for cache key generation
+
+### Enhanced SIMD Performance
+- **AVX2 character classification** - Real SIMD intrinsics for 32-byte parallel character classification
+- **PSHUFB nibble technique** - Ultra-fast ASCII class lookup
+- **Verified correctness** - SIMD paths produce identical results to scalar (test-verified)
+
+### Vocabulary Refactor
+- **Structured `Vocabulary` type** - Replaced raw `Vec<String>` with type-safe vocabulary management
+- **Centralized special tokens** - `SpecialTokens` struct for `[CLS]`, `[SEP]`, `[PAD]`, etc.
+- **Improved type safety** - Compile-time guarantees for vocabulary operations
+
+### Test Results
+```
+407 tests passed (budtiktok-core)
+3 serialization roundtrip tests passed
+Workspace compilation: Success
+```
+
 ## 📄 License
 
 This project is licensed under the **Apache-2.0** license.
