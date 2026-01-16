@@ -1,0 +1,141 @@
+name: Python Package Tests
+
+on:
+  pull_request:
+    paths:
+      - 'crates/budtiktok-python/**'
+      - 'crates/budtiktok-core/**'
+      - 'crates/budtiktok-simd/**'
+      - 'crates/budtiktok-hf-compat/**'
+      - '.github/workflows/python-test.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'crates/budtiktok-python/**'
+      - 'crates/budtiktok-core/**'
+      - 'crates/budtiktok-simd/**'
+      - 'crates/budtiktok-hf-compat/**'
+      - '.github/workflows/python-test.yml'
+
+jobs:
+  test:
+    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        run: pip install maturin pytest numpy
+
+      - name: Build and install package
+        run: maturin develop --release
+        working-directory: crates/budtiktok-python
+
+      - name: Run Python import test
+        run: python -c "from budtiktok import Tokenizer, get_config; print('Import successful'); print(get_config())"
+
+      - name: Run basic functionality test
+        run: |
+          python -c "
+          from budtiktok import Tokenizer
+          import tempfile
+          import json
+          import os
+
+          # Create a minimal tokenizer.json for testing
+          tokenizer_config = {
+            'version': '1.0',
+            'truncation': None,
+            'padding': None,
+            'added_tokens': [],
+            'normalizer': None,
+            'pre_tokenizer': {
+              'type': 'Whitespace'
+            },
+            'post_processor': None,
+            'decoder': None,
+            'model': {
+              'type': 'WordLevel',
+              'vocab': {
+                'hello': 0,
+                'world': 1,
+                '[UNK]': 2
+              },
+              'unk_token': '[UNK]'
+            }
+          }
+
+          # Write to temp file
+          with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(tokenizer_config, f)
+            temp_path = f.name
+
+          try:
+            tokenizer = Tokenizer.from_file(temp_path)
+            encoding = tokenizer.encode('hello world', add_special_tokens=False)
+            print(f'Encoded IDs: {encoding.ids}')
+            print(f'Tokens: {encoding.tokens}')
+            assert len(encoding.ids) > 0, 'Encoding failed'
+            print('Basic functionality test passed!')
+          finally:
+            os.unlink(temp_path)
+          "
+
+      - name: Check for test files
+        id: check_tests
+        run: |
+          if [ -d "crates/budtiktok-python/tests" ] && [ -n "$(ls -A crates/budtiktok-python/tests/*.py 2>/dev/null)" ]; then
+            echo "has_tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_tests=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Run pytest
+        if: steps.check_tests.outputs.has_tests == 'true'
+        run: pytest crates/budtiktok-python/tests -v
+
+  # Build wheels to ensure they can be created successfully
+  build-check:
+    name: Build Check - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist
+          working-directory: crates/budtiktok-python
+
+      - name: List built wheels
+        run: ls -lh crates/budtiktok-python/dist
+        shell: bash
+
+      - name: Upload wheel as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-wheel-${{ matrix.os }}
+          path: crates/budtiktok-python/dist
+          retention-days: 7

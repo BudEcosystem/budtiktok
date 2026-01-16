@@ -39,10 +39,10 @@ torch = ["torch>=1.9.0"]
 all = ["torch>=1.9.0"]
 
 [project.urls]
-Homepage = "https://github.com/latentbud/budtiktok"
-Documentation = "https://github.com/latentbud/budtiktok#readme"
-Repository = "https://github.com/latentbud/budtiktok"
-Issues = "https://github.com/latentbud/budtiktok/issues"
+Homepage = "https://github.com/BudEcosystem/budtiktok"
+Documentation = "https://github.com/BudEcosystem/budtiktok#readme"
+Repository = "https://github.com/BudEcosystem/budtiktok"
+Issues = "https://github.com/BudEcosystem/budtiktok/issues"
 
 [tool.maturin]
 # Build the Python extension module

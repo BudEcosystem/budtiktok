@@ -106,6 +106,86 @@ from infinity_emb.inference.optimizations.budtiktok_tokenizer import (
 tokenizer = create_budtiktok_tokenizer(model_path, use_budtiktok=True)
 ```
 
+## Development
+
+### Building from Source
+
+**Prerequisites:**
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install maturin
+pip install maturin
+```
+
+**Development build:**
+```bash
+cd crates/budtiktok-python
+maturin develop --release
+```
+
+**Build wheel:**
+```bash
+maturin build --release
+# Output: target/wheels/budtiktok-*.whl
+```
+
+### Installation Options
+
+1. **From PyPI (recommended):**
+   ```bash
+   pip install budtiktok
+   ```
+
+2. **From GitHub:**
+   ```bash
+   pip install git+https://github.com/BudEcosystem/budtiktok.git#subdirectory=crates/budtiktok-python
+   ```
+
+3. **From local source:**
+   ```bash
+   git clone https://github.com/BudEcosystem/budtiktok.git
+   cd budtiktok/crates/budtiktok-python
+   pip install maturin
+   maturin develop --release
+   ```
+
+### Platform Support
+
+| Platform | Architecture | Status |
+|----------|-------------|---------|
+| Linux | x86_64 | ✅ Fully supported |
+| Linux | aarch64 | ✅ Fully supported |
+| macOS | x86_64 (Intel) | ✅ Fully supported |
+| macOS | aarch64 (Apple Silicon) | ✅ Fully supported |
+| Windows | x64 | ✅ Fully supported |
+
+**Minimum requirements:**
+- Python 3.8+
+- glibc 2.28+ (Linux)
+- macOS 10.12+ (Sierra)
+- Windows 10+
+
+### Running Tests
+
+```bash
+# Run Python tests (if available)
+pytest crates/budtiktok-python/tests -v
+
+# Run Rust tests
+cargo test -p budtiktok-python
+
+# Quick smoke test
+python -c "from budtiktok import Tokenizer, get_config; print(get_config())"
+```
+
+## Contributing
+
+Contributions are welcome! Please see the main repository for contribution guidelines.
+
+For releases and CI/CD documentation, see [RELEASE.md](../../.github/RELEASE.md).
+
 ## License
 
 Apache-2.0
