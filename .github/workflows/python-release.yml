@@ -76,21 +76,17 @@ jobs:
   # Build wheels for Windows
   windows:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        target: [x64]
-        python: ['3.8', '3.9', '3.10', '3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: '3.11'
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.target }}
+          target: x64
           args: --release --out dist
           sccache: 'true'
           working-directory: crates/budtiktok-python
@@ -98,7 +94,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows-${{ matrix.target }}-py${{ matrix.python }}
+          name: wheels-windows-x64
           path: crates/budtiktok-python/dist
 
   # Build source distribution
@@ -200,4 +196,5 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
           password: ${{ secrets.TEST_PYPI_API_TOKEN }}
           skip-existing: true
+          verbose: true
           attestations: false
