@@ -31,6 +31,16 @@
 
 ## 📦 Installation
 
+### Python
+
+```bash
+pip install budtiktok
+```
+
+[![PyPI](https://img.shields.io/pypi/v/budtiktok)](https://pypi.org/project/budtiktok/)
+
+### Rust
+
 Add `budtiktok` to your `Cargo.toml`:
 
 ```toml
@@ -40,7 +50,25 @@ budtiktok = { git = "https://github.com/BudEcosystem/budtiktok.git" }
 
 ## 🛠️ Usage
 
-### Basic Tokenization
+### Python
+
+```python
+from budtiktok import Tokenizer
+
+# Load from a standard tokenizer.json file
+tokenizer = Tokenizer.from_file("tokenizer.json")
+
+# Encode text
+encoding = tokenizer.encode("Hello, world!")
+print(f"Tokens: {encoding.tokens}")
+print(f"IDs: {encoding.ids}")
+
+# Decode IDs back to text
+decoded = tokenizer.decode(encoding.ids)
+print(f"Decoded: {decoded}")
+```
+
+### Rust
 
 ```rust
 use budtiktok::TokenizerPipeline;
