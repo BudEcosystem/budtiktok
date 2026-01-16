@@ -148,6 +148,8 @@ jobs:
         with:
           packages-dir: dist/
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+          attestations: false
 
   # Test PyPI publication (optional, runs on workflow_dispatch with publish=no)
   publish-testpypi:
@@ -173,3 +175,5 @@ jobs:
           packages-dir: dist/
           repository-url: https://test.pypi.org/legacy/
           password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          skip-existing: true
+          attestations: false
