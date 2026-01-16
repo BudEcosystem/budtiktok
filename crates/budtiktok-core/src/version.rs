@@ -145,9 +145,10 @@ impl SimdFeatures {
         {
             features.neon = true; // Always available on AArch64
 
-            // SVE detection via library functions
-            features.sve = crate::sve::is_sve_available();
-            features.sve2 = crate::sve::is_sve2_available();
+            // SVE/SVE2 detection - Currently disabled as runtime detection
+            // is not yet implemented. SVE is rarely available on current hardware.
+            features.sve = false;
+            features.sve2 = false;
         }
 
         features
@@ -180,14 +181,9 @@ impl SimdFeatures {
             SimdTier::Avx512 => 64,
             SimdTier::Avx2 => 32,
             SimdTier::Sve2 | SimdTier::Sve => {
-                // SVE is variable length, return minimum
-                #[cfg(target_arch = "aarch64")]
-                {
-                    let vl = crate::sve::get_sve_vector_length();
-                    if vl > 0 { vl } else { 16 }
-                }
-                #[cfg(not(target_arch = "aarch64"))]
-                { 16 }
+                // SVE is variable length. Since SVE detection is disabled,
+                // return the minimum vector length (128 bits = 16 bytes)
+                16
             }
             SimdTier::Neon => 16,
             SimdTier::Sse42 | SimdTier::Sse2 => 16,
